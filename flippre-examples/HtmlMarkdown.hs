@@ -82,14 +82,9 @@ keywords = ["true", "false", "let", "lety", "in", "if", "then", "else"]
 flipprExp :: (FliPprD arg exp) => FliPprM exp (A arg Exp -> E exp D)
 flipprExp = do
   pprName <- share $ \x -> case_ x [unName $ \s -> textAs s ident]
-  pprInt <- share $ \n -> case_ n [atoiP $ \s -> textAs s numbers]
-  pprBool <- share $ \b -> case_ b [unTrue $ text "true", unFalse $ text "false"]
 
   let pprVar = pprName
 
-
-  -- Technique mentioned in http://www.haskellforall.com/2020/11/pretty-print-syntax-trees-with-this-one.html.
-  -- A trick is that patterns are intentionally overlapping, so that it can parse ugly string, wihtout <?
   letrs [0] $ \pExp ->
     def
       ( \prec x ->
