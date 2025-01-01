@@ -85,71 +85,21 @@ flipprExp = do
   pprInt <- share $ \n -> case_ n [atoiP $ \s -> textAs s numbers]
   pprBool <- share $ \b -> case_ b [unTrue $ text "true", unFalse $ text "false"]
 
-
-  let pprLety p n e1 e2 =
-        group $
-          vsep
-            [ hsep [text "lety", pprName n <+>. text "=" <+>. align (p 0 e1)]
-            , hsep [text "in", align (p 0 e2)]
-            ]
-  let pprIf p e0 e1 e2 =
-        group $
-          vsep
-            [ hsep [text "if", p 0 e0]
-            , hsep [text "then", p 0 e1]
-            , hsep [text "else", p 0 e2]
-            ]
-  let pprOp p (Fixity assoc prec) opS e1 e2 =
-        let (dl, dr)
-              | AssocL <- assoc = (0, 1)
-              | AssocR <- assoc = (1, 0)
-              | AssocN <- assoc = (1, 1)
-        in  p (prec + dl) e1 <+>. text opS <+>. p (prec + dr) e2
-
   let pprVar = pprName
-  let pprLit l =
-        case_
-          l
-          [ unLBool pprBool
-          , unLInt pprInt
-          ]
+
 
   -- Technique mentioned in http://www.haskellforall.com/2020/11/pretty-print-syntax-trees-with-this-one.html.
   -- A trick is that patterns are intentionally overlapping, so that it can parse ugly string, wihtout <?
-  letrs [0 .. 3] $ \pExp ->
+  letrs [0] $ \pExp ->
     def
       ( \prec x ->
-          if
-            | prec == 0 ->
-                case_
-                  x
-                  [  unLety $ \n e1 e2 -> pprLety pExp n e1 e2
-                  , unIf $ \e0 e1 e2 -> pprIf pExp e0 e1 e2
-                  , otherwiseP $ pExp (prec + 1)
-                  ]
-            | prec == 1 ->
-                case_
-                  x
-                  [ $(pat 'Op) $(pat 'Add) varP varP `br` \e1 e2 -> pprOp pExp (Fixity AssocL 1) "+" e1 e2
-                  , otherwiseP $ pExp (prec + 1)
-                  ]
-            | prec == 2 ->
-                case_
-                  x
-                  [ --  $(branch [p| Op Mul e1 e2 |] [| pprOp pExp (Fixity AssocL 2)  "*" e1 e2 |]),
-                    -- compostional approach to pattern matching
-                    br ($(pat 'Op) $(pat 'Mul) varP varP) $ \e1 e2 -> pprOp pExp (Fixity AssocL 2) "*" e1 e2
-                  , otherwiseP $ pExp (prec + 1)
-                  ]
-            | otherwise ->
-                case_
-                  x
-                  [ unVar $ \n -> pprVar n
-                  , unLiteral $ \l -> pprLit l
-                  , otherwiseP $ parens . pExp 0
-                  ]
+            case_
+                x
+                [ unVar $ \n -> pprVar n
+                , otherwiseP $ parens . pExp 0
+                ]
       )
-      $ return (pExp 0)
+      ( return (pExp 0) )
 
 gExp :: (G.GrammarD Char g) => g (Err ann Exp)
 gExp = parsingModeWith (CommentSpec (Just "--") (Just $ BlockCommentSpec "{-" "-}" True)) (flippr $ fromFunction <$> flipprExp)
@@ -167,12 +117,9 @@ pprExp = pprMode (flippr $ fromFunction <$> flipprExp)
 
 exp1 :: Exp
 exp1 = 
-  Lety x (Literal $ LInt 10) $ 
-    If (Literal $ LBool True) 
-       (Var x) 
-       (Literal $ LInt 0)
+    Var x 
   where
-    x = Name "x"
+    x = Name "boldHellobold"
 
 main :: IO ()
 main = do
