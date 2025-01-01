@@ -36,7 +36,6 @@ data BinOp = Add | Mul
   deriving (Eq, Show)
 data Exp
   = Op BinOp Exp Exp
-  | Let Name Exp Exp
   | Lety Name Exp Exp
   | Literal Lit
   | If Exp Exp Exp
@@ -86,12 +85,7 @@ flipprExp = do
   pprInt <- share $ \n -> case_ n [atoiP $ \s -> textAs s numbers]
   pprBool <- share $ \b -> case_ b [unTrue $ text "true", unFalse $ text "false"]
 
-  let pprLet p n e1 e2 =
-        group $
-          vsep
-            [ hsep [text "let", pprName n <+>. text "=" <+>. align (p 0 e1)]
-            , hsep [text "in", align (p 0 e2)]
-            ]
+
   let pprLety p n e1 e2 =
         group $
           vsep
@@ -129,8 +123,7 @@ flipprExp = do
             | prec == 0 ->
                 case_
                   x
-                  [ unLet $ \n e1 e2 -> pprLet pExp n e1 e2
-                  , unLety $ \n e1 e2 -> pprLety pExp n e1 e2
+                  [  unLety $ \n e1 e2 -> pprLety pExp n e1 e2
                   , unIf $ \e0 e1 e2 -> pprIf pExp e0 e1 e2
                   , otherwiseP $ pExp (prec + 1)
                   ]
