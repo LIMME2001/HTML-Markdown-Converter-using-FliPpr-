@@ -37,15 +37,13 @@ data BinOp = Add | Mul
   deriving (Eq, Show)
 data Exp
   = Content Name 
-  | HtmlLeft Lit
-  | HtmlRight Lit
+  | TagLeft Name Exp Exp
+  | TagRight Name
   deriving (Eq, Show)
 
 $(mkUn ''Name)
 $(mkUn ''Exp)
 $(mkUn ''Lit)
-
--- hello
 
 otherwiseP :: (arg Exp -> exp t) -> Branch arg exp Exp t
 otherwiseP = Branch (PartialBij "otherwiseP" Just Just)
@@ -78,10 +76,6 @@ ident = (small <> AM.star alphaNum) `AM.difference` AM.unions (map fromString ke
 keywords :: [String]
 keywords = []
 
--- Sanitize variable names by replacing non-alphanumeric characters with underscores
-sanitizeName :: String -> String
-sanitizeName = map (\c -> if isAlphaNum c then c else '_')
-
 flipprExp :: (FliPprD arg exp) => FliPprM exp (A arg Exp -> E exp D)
 flipprExp = do
   pprName <- share $ \x -> case_ x [unName $ \s -> textAs (s) ident]
@@ -94,13 +88,15 @@ flipprExp = do
             case_
                 x
                 [ unContent $ \n -> pprVar n
+                , unTagLeft $ \n e1 e2 -> text "<" <+> pprVar n <+> text ">" <+> pExp 0 e1 <+> pExp 0 e2
+                , unTagRight $ \n -> text "</" <+> pprVar n <+> text ">"
                 , otherwiseP $ parens . pExp 0
                 ]
       )
       ( return (pExp 0) )
 
 gExp :: (G.GrammarD Char g) => g (Err ann Exp)
-gExp = parsingModeWith (CommentSpec (Just "--") (Just $ BlockCommentSpec "{-" "-}" True)) (flippr $ fromFunction <$> flipprExp)
+gExp = parsingMode (flippr $ fromFunction <$> flipprExp)
 
 parseExp :: [Char] -> Exp
 parseExp = \s -> case p s of
@@ -115,18 +111,30 @@ pprExp = pprMode (flippr $ fromFunction <$> flipprExp)
 
 exp1 :: Exp
 exp1 = 
-    Content x 
-  where
-    x = Name "testboldHellobold"
+  TagLeft (Name "html") (Content (Name "helloWorld")) (TagRight (Name "html"))
+
+exp2 :: Doc ann
+exp2 = text "< html > helloWorld </ html >"
 
 main :: IO ()
 main = do
+  -- Pretty-print exp1 as a Doc ann
   let s = show (pprExp exp1)
   putStrLn "`pprExp exp1` results in ..."
   putStrLn s
+
+  -- Parse the pretty-printed exp1 back to Exp
   let e = parseExp s
   putStrLn $ replicate 80 '-'
   putStrLn "`parseExp (pprExp exp1)` results in ..."
   print e
+
+  -- Check if exp1 matches the parsed result
   putStrLn $ replicate 80 '-'
   printf "`exp1 == parseExp (pprExp exp1)` = %s\n" (show $ e == exp1)
+
+  -- convert exp2 to data
+  putStrLn $ replicate 80 '-'
+  let e2 = parseExp (show exp2)
+  putStrLn "`parseExp (show exp2)` results in ..."
+  print e2
