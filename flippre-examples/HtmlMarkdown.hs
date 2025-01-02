@@ -20,6 +20,8 @@ import qualified Text.FliPpr.Grammar as G
 import qualified Text.FliPpr.Grammar.Driver.Earley as E
 
 import Data.String (fromString)
+import Data.Char (isAlphaNum)
+
 
 import Prettyprinter (Doc)
 import Text.Printf
@@ -28,18 +30,15 @@ newtype Name = Name String
   deriving (Eq, Show)
 
 data Lit
-  = LBool Bool
-  | LInt Int
+  = LString String
   deriving (Eq, Show)
 
 data BinOp = Add | Mul
   deriving (Eq, Show)
 data Exp
-  = Op BinOp Exp Exp
-  | Lety Name Exp Exp
-  | Literal Lit
-  | If Exp Exp Exp
-  | Var Name
+  = Content Name 
+  | HtmlLeft Lit
+  | HtmlRight Lit
   deriving (Eq, Show)
 
 $(mkUn ''Name)
@@ -77,11 +76,15 @@ ident = (small <> AM.star alphaNum) `AM.difference` AM.unions (map fromString ke
 
 
 keywords :: [String]
-keywords = ["true", "false", "let", "lety", "in", "if", "then", "else"]
+keywords = []
+
+-- Sanitize variable names by replacing non-alphanumeric characters with underscores
+sanitizeName :: String -> String
+sanitizeName = map (\c -> if isAlphaNum c then c else '_')
 
 flipprExp :: (FliPprD arg exp) => FliPprM exp (A arg Exp -> E exp D)
 flipprExp = do
-  pprName <- share $ \x -> case_ x [unName $ \s -> textAs s ident]
+  pprName <- share $ \x -> case_ x [unName $ \s -> textAs (s) ident]
 
   let pprVar = pprName
 
@@ -90,7 +93,7 @@ flipprExp = do
       ( \prec x ->
             case_
                 x
-                [ unVar $ \n -> pprVar n
+                [ unContent $ \n -> pprVar n
                 , otherwiseP $ parens . pExp 0
                 ]
       )
@@ -112,9 +115,9 @@ pprExp = pprMode (flippr $ fromFunction <$> flipprExp)
 
 exp1 :: Exp
 exp1 = 
-    Var x 
+    Content x 
   where
-    x = Name "boldHellobold"
+    x = Name "testboldHellobold"
 
 main :: IO ()
 main = do
