@@ -39,8 +39,14 @@ data BinOp = Add | Mul
 -- The data type for representing HTML expressions
 data HtmlExp
   = Content Name 
-  | TagLeft Name HtmlExp HtmlExp
-  | TagRight Name
+  | TagHtml HtmlExp
+  | TagBold HtmlExp
+  | TagH1 HtmlExp
+  | TagH2 HtmlExp
+  | TagH3 HtmlExp
+  | TagH4 HtmlExp
+  | TagH5 HtmlExp
+  | Sequence HtmlExp HtmlExp
   deriving (Eq, Show)
 
 $(mkUn ''Name)
@@ -79,8 +85,14 @@ flipprExp1 = do
             case_
                 x
                 [ unContent $ \n -> pprVar n
-                , unTagLeft $ \n e1 e2 -> text "<" <+> pprVar n <+> text ">" <+> pExp 0 e1 <+> pExp 0 e2
-                , unTagRight $ \n -> text "</" <+> pprVar n <+> text ">"
+                , unTagHtml $ \e1 -> text "<html>" <+> pExp 0 e1 <+> text "</html>"
+                , unTagBold $ \e1 -> text "<b>" <+> pExp 0 e1 <+> text "</b>"
+                , unTagH1 $ \e1 -> text "<h1>" <+> pExp 0 e1 <+> text "</h1>"
+                , unTagH2 $ \e1 -> text "<h2>" <+> pExp 0 e1 <+> text "</h2>"
+                , unTagH3 $ \e1 -> text "<h3>" <+> pExp 0 e1 <+> text "</h3>"
+                , unTagH4 $ \e1 -> text "<h4>" <+> pExp 0 e1 <+> text "</h4>"
+                , unTagH5 $ \e1 -> text "<h5>" <+> pExp 0 e1 <+> text "</h5>"
+                , unSequence $ \e1 e2 -> pExp 0 e1 <+> pExp 0 e2
                 , otherwiseP $ parens . pExp 0
                 ]
       )
@@ -113,8 +125,14 @@ flipprExp2 = do
             case_
                 x
                 [ unContent $ \n -> pprVar n
-                , unTagLeft $ \n e1 e2 -> text "**" <+> pprVar n <+> text "**" <+> pExp 0 e1 <+> pExp 0 e2
-                , unTagRight $ \n -> text "**" <+> pprVar n <+> text "**"
+                , unTagHtml $ \e1 -> text "" <+> pExp 0 e1
+                , unTagBold $ \e1 -> text "**" <+> pExp 0 e1 <+> text "**"
+                , unTagH1 $ \e1 -> pExp 0 e1 <+> text "\n==="
+                , unTagH2 $ \e1 -> pExp 0 e1 <+> text "\n---"
+                , unTagH3 $ \e1 -> text "###" <+> pExp 0 e1
+                , unTagH4 $ \e1 -> text "####" <+> pExp 0 e1
+                , unTagH5 $ \e1 -> text "#####" <+> pExp 0 e1
+                , unSequence $ \e1 e2 -> pExp 0 e1 <+> pExp 0 e2
                 , otherwiseP $ parens . pExp 0
                 ]
       )
@@ -139,10 +157,29 @@ parseHtmlTextDoc2 = \s -> case p s of
 
 htmlExp1 :: HtmlExp
 htmlExp1 = 
-  TagLeft (Name "html") (Content (Name "helloWorld")) (TagRight (Name "html"))
+  TagHtml (Content (Name "helloWorld"))
+
+htmlExp2 :: HtmlExp
+htmlExp2 = 
+  TagHtml (Sequence (TagBold (Content (Name "helloWorld"))) (TagH1 (Content (Name "helloWorld"))))
+
+htmlExp3 :: HtmlExp
+htmlExp3 = 
+  TagBold (Content (Name "helloWorld"))
+
+htmlExp4 :: HtmlExp
+htmlExp4 = 
+  TagH3 (Content (Name "helloWorld"))
+
 
 htmlTextDoc :: Doc ann
-htmlTextDoc = text "< html > helloWorld </ html >"
+htmlTextDoc = text "<html> helloWorld </html>"
+
+htmlTextDoc2 :: Doc ann
+htmlTextDoc2 = text "<html> <b> helloWorld </b> </html>"
+
+htmlTextDoc3 :: Doc ann
+htmlTextDoc3 = text "<h1> helloWorld </h1>"
 
 main :: IO ()
 main = do
@@ -164,6 +201,70 @@ main = do
   printf "`htmlExp1 == parseHtmlTextDoc1 (pprHtmlExp1 htmlExp1)` = %s\n" (show $ e == htmlExp1)
 
   putStrLn $ replicate 80 '+'
+
+  -- TEST 2
+
+  -- Pretty-print htmlExp1 as a html text Doc ann
+  let s = show (pprHtmlExp1 htmlExp2)
+  putStrLn "`pprHtmlExp1 htmlExp2` results in ..."
+  putStrLn s
+
+  -- Parse the pretty-printed htmlExp1 back to HtmlExp
+  let e = parseHtmlTextDoc1 s
+  putStrLn $ replicate 80 '-'
+  putStrLn "`parseHtmlTextDoc1 (pprHtmlExp1 htmlExp2)` results in ..."
+  print e
+
+  -- convert htmlTextDoc to data the to markdown text Doc ann
+  putStrLn $ replicate 80 '-'
+  let s2 = show (pprHtmlExp2 e)
+  putStrLn "`pprHtmlExp2 e2` results in ..."
+  putStrLn s2
+
+  -- Check if htmlExp1 matches the parsed result
+  putStrLn $ replicate 80 '-'
+  printf "`htmlExp2 == parseHtmlTextDoc1 (pprHtmlExp1 htmlExp2)` = %s\n" (show $ e == htmlExp2)
+
+  putStrLn $ replicate 80 '+'
+
+  -- TEST 3
+
+  -- Pretty-print htmlExp1 as a html text Doc ann
+  let s = show (pprHtmlExp1 htmlExp3)
+  putStrLn "`pprHtmlExp1 htmlExp3` results in ..."
+  putStrLn s
+
+  -- Parse the pretty-printed htmlExp1 back to HtmlExp
+  let e = parseHtmlTextDoc1 s
+  putStrLn $ replicate 80 '-'
+  putStrLn "`parseHtmlTextDoc1 (pprHtmlExp1 htmlExp3)` results in ..."
+  print e
+
+  -- Check if htmlExp1 matches the parsed result
+  putStrLn $ replicate 80 '-'
+  printf "`htmlExp1 == parseHtmlTextDoc1 (pprHtmlExp1 htmlExp3)` = %s\n" (show $ e == htmlExp3)
+
+  putStrLn $ replicate 80 '+'
+
+  -- TEST 4
+
+  -- Pretty-print htmlExp1 as a html text Doc ann
+  let s = show (pprHtmlExp1 htmlExp4)
+  putStrLn "`pprHtmlExp1 htmlExp4` results in ..."
+  putStrLn s
+
+  -- Parse the pretty-printed htmlExp1 back to HtmlExp
+  let e = parseHtmlTextDoc1 s
+  putStrLn $ replicate 80 '-'
+  putStrLn "`parseHtmlTextDoc1 (pprHtmlExp1 htmlExp4)` results in ..."
+  print e
+
+  -- Check if htmlExp1 matches the parsed result
+  putStrLn $ replicate 80 '-'
+  printf "`htmlExp1 == parseHtmlTextDoc1 (pprHtmlExp1 htmlExp4)` = %s\n" (show $ e == htmlExp4)
+
+  putStrLn $ replicate 80 '+'
+
 
   ---------- MARKDOWN -----------
 
@@ -188,6 +289,32 @@ main = do
   -- convert htmlTextDoc to data the to markdown text Doc ann
   putStrLn $ replicate 80 '-'
   let e2 = parseHtmlTextDoc1 (show htmlTextDoc)
+  putStrLn "`parseHtmlTextDoc1 (show htmlTextDoc)` results in ..."
+  print e2
+  let s2 = show (pprHtmlExp2 e2)
+  putStrLn "`pprHtmlExp2 e2` results in ..."
+  putStrLn s2
+
+
+  -- test 2 markdown
+
+  putStrLn $ replicate 80 '+'
+  -- convert htmlTextDoc to data the to markdown text Doc ann
+  putStrLn $ replicate 80 '-'
+  let e2 = parseHtmlTextDoc1 (show htmlTextDoc2)
+  putStrLn "`parseHtmlTextDoc1 (show htmlTextDoc)` results in ..."
+  print e2
+  let s2 = show (pprHtmlExp2 e2)
+  putStrLn "`pprHtmlExp2 e2` results in ..."
+  putStrLn s2
+
+
+  -- test 3 markdown
+
+  putStrLn $ replicate 80 '+'
+  -- convert htmlTextDoc to data the to markdown text Doc ann
+  putStrLn $ replicate 80 '-'
+  let e2 = parseHtmlTextDoc1 (show htmlTextDoc3)
   putStrLn "`parseHtmlTextDoc1 (show htmlTextDoc)` results in ..."
   print e2
   let s2 = show (pprHtmlExp2 e2)
