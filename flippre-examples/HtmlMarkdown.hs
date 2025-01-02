@@ -35,30 +35,20 @@ data Lit
 
 data BinOp = Add | Mul
   deriving (Eq, Show)
-data Exp
+
+-- The data type for representing HTML expressions
+data HtmlExp
   = Content Name 
-  | TagLeft Name Exp Exp
+  | TagLeft Name HtmlExp HtmlExp
   | TagRight Name
   deriving (Eq, Show)
 
 $(mkUn ''Name)
-$(mkUn ''Exp)
+$(mkUn ''HtmlExp)
 $(mkUn ''Lit)
 
-otherwiseP :: (arg Exp -> exp t) -> Branch arg exp Exp t
+otherwiseP :: (arg HtmlExp -> exp t) -> Branch arg exp HtmlExp t
 otherwiseP = Branch (PartialBij "otherwiseP" Just Just)
-
-atoiP :: (arg String -> exp t) -> Branch arg exp Int t
-atoiP =
-  Branch
-    ( PartialBij
-        "atoi"
-        (Just . show)
-        (\s -> l2m $ do (n, "") <- reads s; return n)
-    )
-  where
-    l2m [] = Nothing
-    l2m (x : _) = Just x
 
 number :: AM.DFA Char
 number = AM.range '0' '9'
@@ -76,8 +66,9 @@ ident = (small <> AM.star alphaNum) `AM.difference` AM.unions (map fromString ke
 keywords :: [String]
 keywords = []
 
-flipprExp :: (FliPprD arg exp) => FliPprM exp (A arg Exp -> E exp D)
-flipprExp = do
+-- Define how to convert between HtmlExp and raw text html Doc ann
+flipprExp1 :: (FliPprD arg exp) => FliPprM exp (A arg HtmlExp -> E exp D)
+flipprExp1 = do
   pprName <- share $ \x -> case_ x [unName $ \s -> textAs (s) ident]
 
   let pprVar = pprName
@@ -95,46 +86,46 @@ flipprExp = do
       )
       ( return (pExp 0) )
 
-gExp :: (G.GrammarD Char g) => g (Err ann Exp)
-gExp = parsingMode (flippr $ fromFunction <$> flipprExp)
+gExp1 :: (G.GrammarD Char g) => g (Err ann HtmlExp)
+gExp1 = parsingMode (flippr $ fromFunction <$> flipprExp1)
 
-parseExp :: [Char] -> Exp
-parseExp = \s -> case p s of
+parseHtmlTextDoc :: [Char] -> HtmlExp
+parseHtmlTextDoc = \s -> case p s of
   Ok r -> head r
   Fail e -> error (show e)
   where
-    -- This assignment is important; otherwise, gExp is evaluated again for calls of parseExp.
-    p = E.parse gExp
+    -- This assignment is important; otherwise, gExp1 is evaluated again for calls of parseHtmlTextDoc.
+    p = E.parse gExp1
 
-pprExp :: Exp -> Doc ann
-pprExp = pprMode (flippr $ fromFunction <$> flipprExp)
+pprHtmlExp :: HtmlExp -> Doc ann
+pprHtmlExp = pprMode (flippr $ fromFunction <$> flipprExp1)
 
-exp1 :: Exp
-exp1 = 
+htmlExp1 :: HtmlExp
+htmlExp1 = 
   TagLeft (Name "html") (Content (Name "helloWorld")) (TagRight (Name "html"))
 
-exp2 :: Doc ann
-exp2 = text "< html > helloWorld </ html >"
+htmlTextDoc :: Doc ann
+htmlTextDoc = text "< html > helloWorld </ html >"
 
 main :: IO ()
 main = do
-  -- Pretty-print exp1 as a Doc ann
-  let s = show (pprExp exp1)
-  putStrLn "`pprExp exp1` results in ..."
+  -- Pretty-print htmlExp1 as a Doc ann
+  let s = show (pprHtmlExp htmlExp1)
+  putStrLn "`pprHtmlExp htmlExp1` results in ..."
   putStrLn s
 
-  -- Parse the pretty-printed exp1 back to Exp
-  let e = parseExp s
+  -- Parse the pretty-printed htmlExp1 back to HtmlExp
+  let e = parseHtmlTextDoc s
   putStrLn $ replicate 80 '-'
-  putStrLn "`parseExp (pprExp exp1)` results in ..."
+  putStrLn "`parseHtmlTextDoc (pprHtmlExp htmlExp1)` results in ..."
   print e
 
-  -- Check if exp1 matches the parsed result
+  -- Check if htmlExp1 matches the parsed result
   putStrLn $ replicate 80 '-'
-  printf "`exp1 == parseExp (pprExp exp1)` = %s\n" (show $ e == exp1)
+  printf "`htmlExp1 == parseHtmlTextDoc (pprHtmlExp htmlExp1)` = %s\n" (show $ e == htmlExp1)
 
-  -- convert exp2 to data
+  -- convert htmlTextDoc to data
   putStrLn $ replicate 80 '-'
-  let e2 = parseExp (show exp2)
-  putStrLn "`parseExp (show exp2)` results in ..."
+  let e2 = parseHtmlTextDoc (show htmlTextDoc)
+  putStrLn "`parseHtmlTextDoc (show htmlTextDoc)` results in ..."
   print e2
