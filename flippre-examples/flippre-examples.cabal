@@ -80,3 +80,8 @@ executable simple-lang
     import: warnings, deps 
     main-is:  SimpleLang.hs 
     build-depends: prettyprinter
+
+executable htmlmarkdown
+    import: warnings, deps 
+    main-is: HtmlMarkdown.hs
+    build-depends: deepseq, prettyprinter

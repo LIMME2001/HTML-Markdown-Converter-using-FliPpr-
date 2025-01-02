@@ -32,6 +32,8 @@ ifThenElse False _ f = f
 
 type Name = String
 
+-- ____ Data Definition ____
+-- Represents arithmetic expressions with additional constructs for variables and let bindings
 data Exp
   = Add Exp Exp
   | Mul Exp Exp
@@ -44,12 +46,16 @@ data Exp
 
 $(mkUn ''Exp)
 
+-- ____ Pretty-Printer for Integers ____
+-- Pretty-prints integers based on their digit representation.
 mkPprInt :: (FliPprD a e) => FliPprM e (A a Int -> E e D)
 mkPprInt =
-  share $ \x -> case_ x [atoi $ \s -> textAs s numbers]
+  share $ \x -> case_ x [atoi $ \s -> textAs s numbers] -- s maoste vara ett nummer
   where
     numbers = Automaton.plus (Automaton.range '0' '9')
     atoi = Branch (PartialBij "atoi" (Just . show) (\x -> Just (read x :: Int)))
+
+-- UNSURE ABOUT THIS (already commented out)
 
 -- mkPprInt :: FliPprD a e => FliPprM e (A a Int -> E e D)
 -- mkPprInt = do
@@ -60,31 +66,38 @@ mkPprInt =
 keywords :: [String]
 keywords = ["let", "in"]
 
+-- ____ Pretty-Printer for Variables ____
+-- Pretty-prints variables ensuring no overlap with keywords.
+-- variabler anvends
 mkPprVar :: (FliPprD a e) => FliPprM e (A a String -> E e D)
 mkPprVar =
-  share $ \x -> textAs x ident
+  share $ \x -> textAs x ident -- 
   where
     smallAlpha = Automaton.range 'a' 'z'
     alphaNum = Automaton.unions [Automaton.range '0' '9', Automaton.range 'a' 'z', Automaton.range 'A' 'Z']
-    ident = smallAlpha <> Automaton.star alphaNum `Automaton.difference` Automaton.unions (map fromString keywords)
+    ident = smallAlpha <> Automaton.star alphaNum `Automaton.difference` Automaton.unions (map fromString keywords) 
 
 {-# ANN opP "HLint: ignore Avoid lambda using `infix`" #-}
 opP :: (DocLike d, Num n, Ord n) => Fixity -> (d -> d -> d) -> (n -> a -> d) -> (n -> b -> d) -> n -> a -> b -> d
 opP fixity f p1 p2 k x y = opPrinter fixity f (\k' -> p1 k' x) (\k' -> p2 k' y) k
 
+-- ____ Parenthesis Handling ___
+-- Allows recursive pretty-printing of expressions with optional parentheses.
 manyParens :: (FliPprD a e) => E e D -> E e D
 manyParens d = local $ do
   rec x <- define $ d <? parens x
   return x
 
-pExp :: (FliPprD arg exp) => FliPprM exp (A arg Exp -> E exp D)
+-- ____ Main Pretty-Printer for Expressions ____
+-- Pretty-prints arithmetic expressions, variables, and let bindings.
+pExp :: (FliPprD arg exp) => FliPprM exp (A arg Exp -> E exp D) -- A represents input, E represents output
 pExp = do
   pprInt <- mkPprInt
   pprVar <- mkPprVar
-  let op s d1 d2 =
+  let op s d1 d2 = -- operator s goer sitt pao d1 och d2
         group $
           d1 <> nest 2 (line' <> text s <+>. d2)
-  rec pprE <- define $ \k e ->
+  rec pprE <- define $ \k e -> -- k kan bara vara 0-4? prio level?
         manyParens $
           case_
             e
@@ -94,7 +107,7 @@ pExp = do
             , unAdd $ opP (Fixity AssocL 1) (op "+") pprE pprE k
             , unDiv $ opP (Fixity AssocL 2) (op "/") pprE pprE k
             , unMul $ opP (Fixity AssocL 2) (op "*") pprE pprE k
-            , unLet $ \x e1 e2 ->
+            , unLet $ \x e1 e2 -> -- x e1 e2 must be used only once (exactly once)
                 parensIf (k > 0) $
                   group $
                     text "let" <+> pprVar x
@@ -105,8 +118,10 @@ pExp = do
             ]
   return (\x -> spaces <> pprE (0 :: FinNE Nat4) x <> spaces)
 
+-- ____ Grammar for Parsing Expressions ____
+-- Grammar-based parsing using Earley parser and FliPpr pretty-printer.
 grammar :: (G.GrammarD Char g) => g (Err ann Exp)
-grammar = parsingModeWith (CommentSpec Nothing (Just (BlockCommentSpec "/*" "*/" False))) (flippr $ fromFunction <$> pExp)
+grammar = parsingModeWith (CommentSpec Nothing (Just (BlockCommentSpec "/*" "*/" False))) (flippr $ fromFunction <$> pExp) -- mass comment
 
 -- makeParser :: In t => (forall a e. FliPprD a e => FliPprM e (A a t -> E e D)) -> String -> Err [t]
 -- makeParser p =
@@ -124,6 +139,7 @@ parseExp' s = case parseExp s of
   Ok r -> r
   Fail e -> error (show e)
 
+-- ____ Example Expressions ____
 exp1 :: Exp
 exp1 =
   foldl
@@ -152,6 +168,8 @@ countTime str comp = do
   putStrLn $ "Elapsed: " ++ show d ++ " msec."
   return r
 
+-- ____ Main Function ____
+-- Pretty-prints, parses, and measures execution time for the example expression `exp1`.
 main :: IO ()
 main = do
   -- print $ G.pprAsFlat $ parsingMode $ flippr $ fmap fromFunction $ fromDFA dfaVar
