@@ -31,52 +31,6 @@ This project uses the FliPpr library to define **invertible transformations**:
 | `<li>`       | `- text`                  |
 | Sequence     | Concatenation (newlines)  |
 
-## Examples
-
-### HTML to Markdown Conversion
-
-#### Example 1: Simple HTML
-
-**Input (`HtmlExp`):**
-
-    htmlExample1 = Content (Name "helloWorld")
-
-**Output (`HtmlExp`):**
-- HTML:
-    <html>helloWorld</html>
-- Markdown:
-    helloWorld
-
-#### Example 2: Nested HTML
-
-**Input (`HtmlExp`):**
-
-    htmlExample2 = Sequence 
-      (TagBold (Content (Name "helloWorld")))
-      (TagH1 (Content (Name "helloWorld")))
-      
-**Output (`HtmlExp`):**
-- HTML:
-<html><b>helloWorld</b><h1>helloWorld</h1></html>
-- Markdown:
-**helloWorld**
-
-helloWorld
-===
-
-### Markdown to HTML Conversion
-
-**Input (`Markdown`):**
-**helloWorld**
-
-helloWorld
-===
-      
-**Output (`HtmlExp`):**
-Sequence 
-  (TagBold (Content (Name "helloWorld")))
-  (TagH1 (Content (Name "helloWorld")))
-
 
 ## Getting Started
 
@@ -135,6 +89,17 @@ To add new tags or Markdown syntax:
 
 3. **Update parsers**:
    Add logic to handle the new tag in parseHtml and parseMarkdown.
+
+## Known issues/TODO
+1. The sentence length is limited due to recursion that reformats the sequence expression to ensure correct round-trips. This leads to exponentially long execution times when the sentence length increases.
+
+2. TagP and TagDiv are at the moment identical in markdown since the representation of these tags are identical in Markdown. This leads to problems when destinguishing how to convert text from markdown including <div></div>.
+
+3. Implement TagUl. Difficulties with using mapping within grammar. Unsure about to which lengths flippre can be used in these situations.
+
+4. The sequence expression should be able to handle a large amount of arguments/expressions but since flipper isn't good at handling mapping I'm unsure about a proper implementation. To this point a lot of issues regarding datastructures and types have arisen when solutions have been tested for. 
+
+
 
 ## About the Project
 
