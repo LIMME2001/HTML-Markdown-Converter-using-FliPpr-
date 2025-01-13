@@ -84,4 +84,4 @@ executable simple-lang
 executable html-markdown
     import: warnings, deps
     main-is: HtmlMarkdown.hs
-    build-depends: prettyprinter
+    build-depends: deepseq, prettyprinter

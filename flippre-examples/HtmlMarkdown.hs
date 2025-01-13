@@ -19,6 +19,9 @@ import qualified Text.FliPpr.Automaton as Automaton
 import qualified Text.FliPpr.Grammar as Grammar
 import qualified Text.FliPpr.Grammar.Driver.Earley as EarleyParser
 
+import System.CPUTime
+import Control.DeepSeq
+
 import Data.String (fromString)
 import Data.Char (isAlphaNum)
 
@@ -42,7 +45,6 @@ data BinOp = Add | Mul
 -- The main data type for representing HTML-like expressions
 data HtmlExp
   = Content Name                -- Represents plain content (text)
-  -- | TagHtml HtmlExp             -- Represents an <html> tag NOT USED AS WE WANT IT AS A WRAPPER INSTEAD
   | TagBold HtmlExp             -- Represents a <b> tag
   | TagH1 HtmlExp               -- Represents a <h1> tag
   | TagH2 HtmlExp               -- Represents a <h2> tag
@@ -71,15 +73,6 @@ digit = Automaton.range '0' '9'
 
 digits :: Automaton.DFA Char
 digits = Automaton.plus digit
-
-{-
--- Define a DFA for recognizing identifiers
-identifier :: Automaton.DFA Char
-identifier = (lowercase <> Automaton.star alphanum) `Automaton.difference` Automaton.unions (map fromString reservedKeywords)
-  where
-    lowercase = Automaton.unions [Automaton.range 'a' 'z', Automaton.singleton '_']
-    alphanum = Automaton.unions [digit, lowercase, Automaton.range 'A' 'Z']
--}
 
 identifier :: Automaton.DFA Char
 identifier = (Automaton.star allowedChars) `Automaton.difference` Automaton.unions (map fromString reservedKeywords)
@@ -114,7 +107,6 @@ htmlPrettyPrinter = do
       ( \_prec expr -> 
           case_ expr
             [ unContent $ \name -> prettyVar name
-            -- , unTagHtml $ \child -> text "<html>" <+> prettyExp 0 child <+> text "</html>"
             , unTagBold $ \child -> text "<b>" <+> prettyExp 0 child <+> text "</b>"
             , unTagH1 $ \child -> text "<h1>" <+> prettyExp 0 child <+> text "</h1>"
             , unTagH2 $ \child -> text "<h2>" <+> prettyExp 0 child <+> text "</h2>"
@@ -177,8 +169,6 @@ markdownPrettyPrinter = do
       ( \_prec expr -> 
           case_ expr
             [ unContent $ \name -> prettyVar name
-            -- I want to get rid of text "" but for some reason the terminal locks when i do that
-            -- , unTagHtml $ \child -> text "" <+> prettyExp 0 child
             , unTagBold $ \child -> text "**" <+> prettyExp 0 child <+> text "**"
             , unTagH1 $ \child -> prettyExp 0 child <+> text "\n==="
             , unTagH2 $ \child -> prettyExp 0 child <+> text "\n---"
@@ -211,7 +201,6 @@ parseMarkdown input = case parser input of
 -- Function to pretty-print HtmlExp to a Markdown Doc
 prettyPrintMarkdown :: HtmlExp -> Doc ann
 prettyPrintMarkdown = pprMode (flippr $ fromFunction <$> markdownPrettyPrinter)
-
 
 
 {-
@@ -261,9 +250,6 @@ normalizeHtmlExpWithLimit depth expr = case expr of
   Content name -> Content name
 
 
-
-
-
 -- Examples for testing the functionality
 
 -- Example 1: Simple HTML structure <html>helloWorld</html>
@@ -296,6 +282,38 @@ htmlExample6b = TagLi (Content (Name "Item 2"))
 htmlExample7 :: HtmlExp
 htmlExample7 = TagDiv (Sequence htmlExample6a htmlExample6b)
 
+-- Add instances for NFData
+instance NFData Name where
+  rnf (Name str) = rnf str
+
+instance NFData Lit where
+  rnf (LString str) = rnf str
+
+instance NFData HtmlExp where
+  rnf (Content name) = rnf name
+  rnf (TagBold child) = rnf child
+  rnf (TagH1 child) = rnf child
+  rnf (TagH2 child) = rnf child
+  rnf (TagH3 child) = rnf child
+  rnf (TagH4 child) = rnf child
+  rnf (TagH5 child) = rnf child
+  rnf (TagP child) = rnf child
+  rnf (TagDiv child) = rnf child
+  rnf (TagLi child) = rnf child
+  rnf (Sequence left right) = rnf left `seq` rnf right
+
+-- Update countTime to require NFData
+countTime :: NFData a => String -> IO a -> IO a
+countTime str comp = do
+  putStrLn $ "Measuring " ++ str ++ "..."
+  s <- getCPUTime
+  r <- comp
+  rnf r `seq` return () -- Ensure computation is fully evaluated
+  e <- getCPUTime
+  let d = fromIntegral (e - s) / (10 ^ 9) -- Convert to milliseconds
+  putStrLn $ "Elapsed: " ++ show d ++ " ms."
+  return r
+
 -- Main function to test examples
 main :: IO ()
 main = do
@@ -304,29 +322,28 @@ main = do
         putStrLn $ "Testing Example: " ++ name
         putStrLn $ replicate 80 '='
 
-        -- Pretty-print example as HTML
-        let htmlDoc = show (prettyPrintHtml example)
-        putStrLn $ "HTML Output: " ++ htmlDoc
+        -- Pretty-print to HTML
+        htmlDoc <- countTime "Pretty-printing to HTML" $ do
+          let htmlDoc = show (prettyPrintHtml example)
+          htmlDoc `deepseq` putStrLn $ "HTML Output: " ++ htmlDoc
+          return htmlDoc -- Return htmlDoc for use in later blocks
 
-        -- Parse the HTML output back to HtmlExp
-        let parsedHtmlExp = parseHtml htmlDoc
-        putStrLn $ "Parsed HtmlExp (from HTML): " ++ show parsedHtmlExp
+        -- Parse HTML
+        parsedHtmlExp <- countTime "Parsing HTML" $ do
+          let parsedHtmlExp = parseHtml htmlDoc
+          parsedHtmlExp `deepseq` putStrLn $ "Parsed HtmlExp: " ++ show parsedHtmlExp
+          return parsedHtmlExp -- Return parsedHtmlExp for further use
 
-        -- Verify that parsing round-trips correctly
-        putStrLn $ "Round-Trip (HTML): " ++ show (parsedHtmlExp == example)
+        -- Convert to Markdown
+        markdownDoc <- countTime "Converting to Markdown" $ do
+          let markdownDoc = show (prettyPrintMarkdown example)
+          markdownDoc `deepseq` putStrLn $ "Markdown Output: " ++ markdownDoc
+          return markdownDoc -- Return markdownDoc for use in parsing
 
-        putStrLn $ replicate 40 '-'
-
-        -- Convert HtmlExp to Markdown
-        let markdownDoc = show (prettyPrintMarkdown example)
-        putStrLn $ "Markdown Output: " ++ markdownDoc
-
-        -- Parse Markdown back to HtmlExp using parseMarkdown
-        let parsedMarkdownExp = parseMarkdown markdownDoc
-        putStrLn $ "Parsed HtmlExp (from Markdown): " ++ show parsedMarkdownExp
-
-        -- Verify that Markdown parsing round-trips correctly
-        putStrLn $ "Round-Trip (Markdown): " ++ show (parsedMarkdownExp == example)
+        -- Parse Markdown
+        countTime "Parsing Markdown" $ do
+          let parsedMarkdownExp = parseMarkdown markdownDoc
+          parsedMarkdownExp `deepseq` putStrLn $ "Parsed HtmlExp (from Markdown): " ++ show parsedMarkdownExp
 
         putStrLn ""
 
@@ -339,164 +356,3 @@ main = do
   testExample htmlExample6a "Example 6a: <div><h1>Title</h1><ul><li>Item 1</li><li>Item 2</li></ul></div>"
   testExample htmlExample6b "Example 6b: <div><h1>Title</h1><ul><li>Item 1</li><li>Item 2</li></ul></div>"
   testExample htmlExample7 "Example 7: <div><h1>Title</h1><ul><li>Item 1</li><li>Item 2</li></ul></div>"
-
-
-
-
-
-{-
-
--- Example HTML text for comparison
-htmlTextDoc1 :: Doc ann
-htmlTextDoc1 = text "<html> helloWorld </html>"
-
-htmlTextDoc2 :: Doc ann
-htmlTextDoc2 = text "<html> <b> helloWorld </b> </html>"
-
-htmlTextDoc3 :: Doc ann
-htmlTextDoc3 = text "<h1> helloWorld </h1>"
-
-
-
-
-main :: IO ()
-main = do
-  ---------- HTML -----------
-
-  -- Pretty-print htmlExp1 as a html text Doc ann
-  let s = show (pprHtmlExp1 htmlExp1)
-  putStrLn "`pprHtmlExp1 htmlExp1` results in ..."
-  putStrLn s
-
-  -- Parse the pretty-printed htmlExp1 back to HtmlExp
-  let e = parseHtmlTextDoc1 s
-  putStrLn $ replicate 80 '-'
-  putStrLn "`parseHtmlTextDoc1 (pprHtmlExp1 htmlExp1)` results in ..."
-  print e
-
-  -- Check if htmlExp1 matches the parsed result
-  putStrLn $ replicate 80 '-'
-  printf "`htmlExp1 == parseHtmlTextDoc1 (pprHtmlExp1 htmlExp1)` = %s\n" (show $ e == htmlExp1)
-
-  putStrLn $ replicate 80 '+'
-
-  -- TEST 2
-
-  -- Pretty-print htmlExp1 as a html text Doc ann
-  let s = show (pprHtmlExp1 htmlExp2)
-  putStrLn "`pprHtmlExp1 htmlExp2` results in ..."
-  putStrLn s
-
-  -- Parse the pretty-printed htmlExp1 back to HtmlExp
-  let e = parseHtmlTextDoc1 s
-  putStrLn $ replicate 80 '-'
-  putStrLn "`parseHtmlTextDoc1 (pprHtmlExp1 htmlExp2)` results in ..."
-  print e
-
-  -- convert htmlTextDoc to data the to markdown text Doc ann
-  putStrLn $ replicate 80 '-'
-  let s2 = show (pprHtmlExp2 e)
-  putStrLn "`pprHtmlExp2 e2` results in ..."
-  putStrLn s2
-
-  -- Check if htmlExp1 matches the parsed result
-  putStrLn $ replicate 80 '-'
-  printf "`htmlExp2 == parseHtmlTextDoc1 (pprHtmlExp1 htmlExp2)` = %s\n" (show $ e == htmlExp2)
-
-  putStrLn $ replicate 80 '+'
-
-  -- TEST 3
-
-  -- Pretty-print htmlExp1 as a html text Doc ann
-  let s = show (pprHtmlExp1 htmlExp3)
-  putStrLn "`pprHtmlExp1 htmlExp3` results in ..."
-  putStrLn s
-
-  -- Parse the pretty-printed htmlExp1 back to HtmlExp
-  let e = parseHtmlTextDoc1 s
-  putStrLn $ replicate 80 '-'
-  putStrLn "`parseHtmlTextDoc1 (pprHtmlExp1 htmlExp3)` results in ..."
-  print e
-
-  -- Check if htmlExp1 matches the parsed result
-  putStrLn $ replicate 80 '-'
-  printf "`htmlExp1 == parseHtmlTextDoc1 (pprHtmlExp1 htmlExp3)` = %s\n" (show $ e == htmlExp3)
-
-  putStrLn $ replicate 80 '+'
-
-  -- TEST 4
-
-  -- Pretty-print htmlExp1 as a html text Doc ann
-  let s = show (pprHtmlExp1 htmlExp4)
-  putStrLn "`pprHtmlExp1 htmlExp4` results in ..."
-  putStrLn s
-
-  -- Parse the pretty-printed htmlExp1 back to HtmlExp
-  let e = parseHtmlTextDoc1 s
-  putStrLn $ replicate 80 '-'
-  putStrLn "`parseHtmlTextDoc1 (pprHtmlExp1 htmlExp4)` results in ..."
-  print e
-
-  -- Check if htmlExp1 matches the parsed result
-  putStrLn $ replicate 80 '-'
-  printf "`htmlExp1 == parseHtmlTextDoc1 (pprHtmlExp1 htmlExp4)` = %s\n" (show $ e == htmlExp4)
-
-  putStrLn $ replicate 80 '+'
-
-
-  ---------- MARKDOWN -----------
-
-  -- Pretty-print htmlExp1 as a markdown text Doc ann
-  let s = show (pprHtmlExp2 htmlExp1)
-  putStrLn "`pprHtmlExp2 htmlExp1` results in ..."
-  putStrLn s
-
-  -- Parse the pretty-printed htmlExp1 back to HtmlExp
-  let e = parseHtmlTextDoc2 s
-  putStrLn $ replicate 80 '-'
-  putStrLn "`parseHtmlTextDoc1 (pprHtmlExp2 htmlExp1)` results in ..."
-  print e
-
-  -- Check if htmlExp1 matches the parsed result
-  putStrLn $ replicate 80 '-'
-  printf "`htmlExp1 == parseHtmlTextDoc1 (pprHtmlExp1 htmlExp1)` = %s\n" (show $ e == htmlExp1)
-
-  -- LAST PART from raw html to raw markdown
-
-  putStrLn $ replicate 80 '+'
-  -- convert htmlTextDoc to data the to markdown text Doc ann
-  putStrLn $ replicate 80 '-'
-  let e2 = parseHtmlTextDoc1 (show htmlTextDoc)
-  putStrLn "`parseHtmlTextDoc1 (show htmlTextDoc)` results in ..."
-  print e2
-  let s2 = show (pprHtmlExp2 e2)
-  putStrLn "`pprHtmlExp2 e2` results in ..."
-  putStrLn s2
-
-
-  -- test 2 markdown
-
-  putStrLn $ replicate 80 '+'
-  -- convert htmlTextDoc to data the to markdown text Doc ann
-  putStrLn $ replicate 80 '-'
-  let e2 = parseHtmlTextDoc1 (show htmlTextDoc2)
-  putStrLn "`parseHtmlTextDoc1 (show htmlTextDoc)` results in ..."
-  print e2
-  let s2 = show (pprHtmlExp2 e2)
-  putStrLn "`pprHtmlExp2 e2` results in ..."
-  putStrLn s2
-
-
-  -- test 3 markdown
-
-  putStrLn $ replicate 80 '+'
-  -- convert htmlTextDoc to data the to markdown text Doc ann
-  putStrLn $ replicate 80 '-'
-  let e2 = parseHtmlTextDoc1 (show htmlTextDoc3)
-  putStrLn "`parseHtmlTextDoc1 (show htmlTextDoc)` results in ..."
-  print e2
-  let s2 = show (pprHtmlExp2 e2)
-  putStrLn "`pprHtmlExp2 e2` results in ..."
-  putStrLn s2
-
--}
