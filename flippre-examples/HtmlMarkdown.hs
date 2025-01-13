@@ -99,7 +99,7 @@ htmlPrettyPrinter = do
             , unTagH3 $ \child -> text "<h3>" <+> prettyExp 0 child <+> text "</h3>"
             , unTagH4 $ \child -> text "<h4>" <+> prettyExp 0 child <+> text "</h4>"
             , unTagH5 $ \child -> text "<h5>" <+> prettyExp 0 child <+> text "</h5>"
-            , unSequence $ \first second -> prettyExp 0 first <+> prettyExp 0 second
+            , unSequence $ \first second -> prettyExp 0 first <+> text "\n" <+> prettyExp 0 second
             , otherwiseBranch $ parens . prettyExp 0
             ]
       )
@@ -144,7 +144,7 @@ markdownPrettyPrinter = do
             , unTagH3 $ \child -> text "###" <+> prettyExp 0 child
             , unTagH4 $ \child -> text "####" <+> prettyExp 0 child
             , unTagH5 $ \child -> text "#####" <+> prettyExp 0 child
-            , unSequence $ \first second -> prettyExp 0 first <+> text "\n" <+> prettyExp 0 second
+            , unSequence $ \first second -> text "<div>" <+> prettyExp 0 first <+> prettyExp 0 second <+> text "</div>"
             , otherwiseBranch $ parens . prettyExp 0
             ]
       )
