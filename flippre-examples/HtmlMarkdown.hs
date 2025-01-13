@@ -132,7 +132,7 @@ flipprExp2 = do
                 , unTagH3 $ \e1 -> text "###" <+> pExp 0 e1
                 , unTagH4 $ \e1 -> text "####" <+> pExp 0 e1
                 , unTagH5 $ \e1 -> text "#####" <+> pExp 0 e1
-                , unSequence $ \e1 e2 -> pExp 0 e1 <+> pExp 0 e2
+                , unSequence $ \e1 e2 -> pExp 0 e1 <+> text "\n" <+> pExp 0 e2
                 , otherwiseP $ parens . pExp 0
                 ]
       )
@@ -153,25 +153,35 @@ parseHtmlTextDoc2 = \s -> case p s of
     p = E.parse gExp2
 
 
--- Example HTML expression
+-- Example HTML expressions:
 
+-- Example 1: Simple HTML structure <html>helloWorld</html>
 htmlExp1 :: HtmlExp
 htmlExp1 = 
   TagHtml (Content (Name "helloWorld"))
 
+-- Example 2: HTML with bold and header
+-- <html><b>helloWorld</b><h1>helloWorld</h1></html>
 htmlExp2 :: HtmlExp
 htmlExp2 = 
-  TagHtml (Sequence (TagBold (Content (Name "helloWorld"))) (TagH1 (Content (Name "helloWorld"))))
+  TagHtml (Sequence 
+    (TagBold (Content (Name "helloWorld")))
+    (TagH1 (Content (Name "helloWorld")))
+  )
 
+-- Example 3: Bold text <b>helloWorld</b>
 htmlExp3 :: HtmlExp
 htmlExp3 = 
   TagBold (Content (Name "helloWorld"))
 
+-- Example 4: Header level 3 <h3>helloWorld</h3>
 htmlExp4 :: HtmlExp
 htmlExp4 = 
   TagH3 (Content (Name "helloWorld"))
 
 
+-- Corresponding raw HTML text for comparison (without spaces would be optimal):
+-- TODO: make sure it works without spaces as well (as html is written)
 htmlTextDoc :: Doc ann
 htmlTextDoc = text "<html> helloWorld </html>"
 
@@ -181,6 +191,53 @@ htmlTextDoc2 = text "<html> <b> helloWorld </b> </html>"
 htmlTextDoc3 :: Doc ann
 htmlTextDoc3 = text "<h1> helloWorld </h1>"
 
+main :: IO ()
+main = do
+  -- Function to test a single HtmlExp example
+  let testExample example name = do
+        putStrLn $ replicate 80 '+'
+        putStrLn $ "Testing: " ++ name
+        putStrLn $ replicate 80 '-'
+
+        -- Pretty-print example as HTML
+        let htmlDoc = show (pprHtmlExp1 example)
+        putStrLn "HTML Output:"
+        putStrLn htmlDoc
+
+        -- Parse the HTML output back to HtmlExp
+        let parsedHtmlExp = parseHtmlTextDoc1 htmlDoc
+        putStrLn "Parsed HtmlExp (from HTML):"
+        print parsedHtmlExp
+
+        -- Verify that parsing round-trips correctly
+        putStrLn "Round-Trip (HTML):"
+        print (parsedHtmlExp == example)
+
+        -- Convert HtmlExp to Markdown
+        let markdownDoc = show (pprHtmlExp2 example)
+        putStrLn "Markdown Output:"
+        putStrLn markdownDoc
+
+        -- Parse Markdown back to HtmlExp using parseHtmlTextDoc2
+        let parsedMarkdownExp = parseHtmlTextDoc2 markdownDoc
+        putStrLn "Parsed HtmlExp (from Markdown):"
+        print parsedMarkdownExp
+
+        -- Verify that Markdown parsing round-trips correctly
+        putStrLn "Round-Trip (Markdown):"
+        print (parsedMarkdownExp == example)
+
+  -- Test each example
+  testExample htmlExp1 "Example 1: <html>helloWorld</html>"
+  testExample htmlExp2 "Example 2: <html><b>helloWorld</b><h1>helloWorld</h1></html>"
+  testExample htmlExp3 "Example 3: <b>helloWorld</b>"
+  testExample htmlExp4 "Example 4: <h3>helloWorld</h3>"
+
+
+
+
+
+{-
 main :: IO ()
 main = do
   ---------- HTML -----------
@@ -320,3 +377,5 @@ main = do
   let s2 = show (pprHtmlExp2 e2)
   putStrLn "`pprHtmlExp2 e2` results in ..."
   putStrLn s2
+
+-}
