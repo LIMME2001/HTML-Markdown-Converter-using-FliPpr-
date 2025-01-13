@@ -1,89 +1,126 @@
-# flippre: FliPpr, embedded 
+# HTML-Markdown Converter
 
-This is an embedded implementation of FliPpr, an invertible
-pretty-printing system. The library provides functions and the
-datatypes so that one can write their pretty-printers that are akin to
-the usual functional programming style as possible, and invertible to
-produce CFG parsers. The current implementation uses `Earley` for
-parsing.
+This project implements an **HTML-Markdown Converter** using the FliPpr library. The converter allows for bidirectional transformations between structured HTML-like expressions (`HtmlExp`) and text representations in both **HTML** and **Markdown** formats.
 
-## Build Instruction 
+## Features
 
-This haskell package is managed via stack. So just type
+- Convert structured `HtmlExp` data to **HTML** or **Markdown** text.
+- Parse **HTML** and **Markdown** back into structured `HtmlExp` data.
+- Ensure round-trip correctness with invertible pretty-printers and parsers.
+- Extendable for additional HTML tags and Markdown syntax.
 
-    stack build
-    
-to build the library. Some, examples are given under `flippre-examples`
-directory. For example, to access arithmetic expressions, type: 
+## How It Works
 
-    stack repl flippre-examples:exe:arith 
+This project utilizes the FliPpr library to define invertible transformations:
+- **Pretty-printers** format `HtmlExp` into readable HTML or Markdown text.
+- **Parsers** reconstruct the original `HtmlExp` from text representations.
 
-This code lets us check how to acess the code through stack repl:
+### Supported HTML and Markdown Elements
 
-    stack ide targets
-    
-using the command main then tests it out
+| **HTML Tag** | **Markdown Syntax**       |
+|--------------|---------------------------|
+| `<html>`     | None                      |
+| `<b>`        | `**bold text**`           |
+| `<h1>`       | `text\n===`               |
+| `<h2>`       | `text\n---`               |
+| `<h3>`       | `### text`                |
+| `<h4>`       | `#### text`               |
+| `<h5>`       | `##### text`              |
+| Sequence     | Concatenation (newlines)  |
 
-Other tests 
-pprExp exp1
-    1 + 2 * 3
-parseExpP "1 + 2 * 3"
-    [Add (Num 1) (Mul (Num 2) (Num 3))]
+## Examples
 
-flippre-examples:exe:arithlet 
+### HTML to Markdown
 
+#### Example 1: Simple HTML
+Input:
+    htmlExp1 = TagHtml (Content (Name "helloWorld"))
 
-2013 skapat,
-takes pretty printing, returns parser
-derive a parser from a pretty printer goal()
+Output:
+- HTML: <html>helloWorld</html>
+- Markdown: helloWorld
 
-non/pretty input (still valid string) -> 
+#### Example 2: Nested HTML
+Input:
 
-wadler's combinations bygger det pao
+haskell
+Kopiera kod
+htmlExp2 = TagHtml (Sequence 
+  (TagBold (Content (Name "helloWorld")))
+  (TagH1 (Content (Name "helloWorld")))
+)
+Output:
 
-anvaender indexering foer att avgoera anvaendade av paranteser i samband med pretty printing
+HTML: <html><b>helloWorld</b><h1>helloWorld</h1></html>
+Markdown:
+markdown
+Kopiera kod
+**helloWorld**
 
-group foer att undvika problem med space vs newline.
+helloWorld
+===
+Example 3: Markdown to HTML
+Input:
 
-<+ for additional info. pretty <+ nonpretty
-manyparens uses this
+markdown
+Kopiera kod
+**helloWorld**
 
-2018 - PDF
-use lambda functions insead of global func defs
+helloWorld
+===
+Parsed Output:
 
-rec foer baettre 
+haskell
+Kopiera kod
+TagHtml (Sequence 
+  (TagBold (Content (Name "helloWorld")))
+  (TagH1 (Content (Name "helloWorld")))
+)
+Getting Started
+Installation
+This project is managed using Stack. To build the project, run:
 
-arith, let, simplelang
+bash
+Kopiera kod
+stack build
+Running Examples
+To test the converter, use the main function:
 
-can only generate cfg
-- study cfg (grammar based technology)
-parsing technique, 
-can only define only cfg
+bash
+Kopiera kod
+stack run
+Code Overview
+Data Structures
+HtmlExp: Represents HTML-like expressions, including tags like <html>, <b>, <h1>, and sequences of elements.
+Core Functions
+HTML Conversion:
 
-e, k, x must be used linearly (only once)
+pprHtmlExp1 :: HtmlExp -> Doc ann – Converts HtmlExp to HTML.
+parseHtmlTextDoc1 :: String -> HtmlExp – Parses HTML into HtmlExp.
+Markdown Conversion:
 
-Laes hela boken, typ noedvaendigt
-start with examples (learning, understanding), think about how to approach the problems i want to solve, 
-markdown -> ->HTML
-tweak in order to do it
+pprHtmlExp2 :: HtmlExp -> Doc ann – Converts HtmlExp to Markdown.
+parseHtmlTextDoc2 :: String -> HtmlExp – Parses Markdown into HtmlExp.
+How to Extend
+To add new tags or Markdown syntax, modify the HtmlExp data type and update the corresponding pretty-printers (flipprExp1, flipprExp2) and parsers (parseHtmlTextDoc1, parseHtmlTextDoc2).
 
-opening, closing tab
-cannot input string and output string at the moment.
+For example, to add <h6> support:
 
-might be possible to do a workaround. 
+Update the HtmlExp type:
+haskell
+Kopiera kod
+data HtmlExp
+  = ...
+  | TagH6 HtmlExp
+Extend the pretty-printers:
+HTML: Add <h6> formatting in flipprExp1.
+Markdown: Add ###### formatting in flipprExp2.
+About the Project
+This converter demonstrates the power of invertible transformations using the FliPpr library. It ensures consistency between input and output formats, making it ideal for parsing and converting text-based representations of structured data.
 
+Let me know if you’d like additional tags, formats, or examples to be implemented!
 
-cabal might be easier this works:
-    cabal run arith
+vbnet
+Kopiera kod
 
-stack haddock --no-haddock-deps 
-to build documentation
-
-present what i want to do. flipper in general. 
-
-flipper library (look into it)
-
-look through examples and ask.
-read until chapter 11. 
-13, 14, 15 chapter unnecessary. 
-vad aer pure? (superclass of a monad?) (monad subclass of applicative and ___?)
+This README provides a focused explanation of the HTML-Markdown converter while highlightin
