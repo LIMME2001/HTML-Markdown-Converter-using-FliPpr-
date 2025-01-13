@@ -263,7 +263,7 @@ htmlExample2 = Sequence (TagBold (Content (Name "hello World"))) (TagH1 (Content
 
 -- Example 3: Bold text <b>helloWorld</b>
 htmlExample3 :: HtmlExp
-htmlExample3 = TagBold (Content (Name "hello World. I would like to test the following test hejsan"))
+htmlExample3 = TagBold (Content (Name "hello World. I would like to test the following test hejsan h"))
 
 -- Example 4: Header level 3 <h3>helloWorld</h3>
 -- Problem when made into two parts
@@ -305,7 +305,6 @@ instance NFData HtmlExp where
 -- Update countTime to require NFData
 countTime :: NFData a => String -> IO a -> IO a
 countTime str comp = do
-  putStrLn $ "Measuring " ++ str ++ "..."
   s <- getCPUTime
   r <- comp
   rnf r `seq` return () -- Ensure computation is fully evaluated
@@ -322,28 +321,37 @@ main = do
         putStrLn $ "Testing Example: " ++ name
         putStrLn $ replicate 80 '='
 
-        -- Pretty-print to HTML
-        htmlDoc <- countTime "Pretty-printing to HTML" $ do
+        -- Pretty-print example as HTML
+        htmlDoc <- countTime "HTML Output" $ do
           let htmlDoc = show (prettyPrintHtml example)
-          htmlDoc `deepseq` putStrLn $ "HTML Output: " ++ htmlDoc
-          return htmlDoc -- Return htmlDoc for use in later blocks
+          putStrLn $ "HTML Output: " ++ htmlDoc
+          return htmlDoc
 
-        -- Parse HTML
-        parsedHtmlExp <- countTime "Parsing HTML" $ do
+        -- Parse the HTML output back to HtmlExp
+        parsedHtmlExp <- countTime "Parsed HtmlExp (from HTML)" $ do
           let parsedHtmlExp = parseHtml htmlDoc
-          parsedHtmlExp `deepseq` putStrLn $ "Parsed HtmlExp: " ++ show parsedHtmlExp
-          return parsedHtmlExp -- Return parsedHtmlExp for further use
+          putStrLn $ "Parsed HtmlExp (from HTML): " ++ show parsedHtmlExp
+          return parsedHtmlExp
 
-        -- Convert to Markdown
-        markdownDoc <- countTime "Converting to Markdown" $ do
+        -- Verify that parsing round-trips correctly
+        putStrLn $ "Round-Trip (HTML): " ++ show (parsedHtmlExp == example)
+
+        putStrLn $ replicate 40 '-'
+
+        -- Convert HtmlExp to Markdown
+        markdownDoc <- countTime "Markdown Output" $ do
           let markdownDoc = show (prettyPrintMarkdown example)
-          markdownDoc `deepseq` putStrLn $ "Markdown Output: " ++ markdownDoc
-          return markdownDoc -- Return markdownDoc for use in parsing
+          putStrLn $ "Markdown Output: " ++ markdownDoc
+          return markdownDoc
 
-        -- Parse Markdown
-        countTime "Parsing Markdown" $ do
+        -- Parse Markdown back to HtmlExp using parseMarkdown
+        parsedMarkdownExp <- countTime "Parsed HtmlExp (from Markdown)" $ do
           let parsedMarkdownExp = parseMarkdown markdownDoc
-          parsedMarkdownExp `deepseq` putStrLn $ "Parsed HtmlExp (from Markdown): " ++ show parsedMarkdownExp
+          putStrLn $ "Parsed HtmlExp (from Markdown): " ++ show parsedMarkdownExp
+          return parsedMarkdownExp
+
+        -- Verify that Markdown parsing round-trips correctly
+        putStrLn $ "Round-Trip (Markdown): " ++ show (parsedMarkdownExp == example)
 
         putStrLn ""
 
@@ -353,6 +361,6 @@ main = do
   testExample htmlExample3 "Example 3: <b>helloWorld</b>"
   testExample htmlExample4 "Example 4: <h3>helloWorld</h3>"
   testExample htmlExample5 "Example 5: <p>This is a Paragraph</p>"
-  testExample htmlExample6a "Example 6a: <div><h1>Title</h1><ul><li>Item 1</li><li>Item 2</li></ul></div>"
-  testExample htmlExample6b "Example 6b: <div><h1>Title</h1><ul><li>Item 1</li><li>Item 2</li></ul></div>"
-  testExample htmlExample7 "Example 7: <div><h1>Title</h1><ul><li>Item 1</li><li>Item 2</li></ul></div>"
+  testExample htmlExample6a "Example 6a: <li>Item 1</li>"
+  testExample htmlExample6b "Example 6b: <li>Item 2</li>"
+  testExample htmlExample7 "Example 7: <div><li>Item 1</li><li>Item 2</li></div>"
