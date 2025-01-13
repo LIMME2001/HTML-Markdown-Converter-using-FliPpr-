@@ -84,8 +84,8 @@ To add new tags or Markdown syntax:
      | TagH6 HtmlExp -- New tag
 
 2. **Extend the pretty-printers**:
-    HTML: Add <h6> formatting in htmlPrettyPrinter.
-    Markdown: Add ###### formatting in markdownPrettyPrinter.
+    `HTML: Add <h6> formatting in htmlPrettyPrinter.
+    Markdown: Add ###### formatting in markdownPrettyPrinter.`
 
 3. **Update parsers**:
    Add logic to handle the new tag in parseHtml and parseMarkdown.
@@ -93,7 +93,7 @@ To add new tags or Markdown syntax:
 ## Known issues/TODO
 1. The sentence length is limited due to recursion that reformats the sequence expression to ensure correct round-trips. This leads to exponentially long execution times when the sentence length increases.
 
-2. TagP and TagDiv are at the moment identical in markdown since the representation of these tags are identical in Markdown. This leads to problems when destinguishing how to convert text from markdown including <div></div>.
+2. TagP and TagDiv are at the moment identical in markdown since the representation of these tags are identical in Markdown. This leads to problems when destinguishing how to convert text from markdown including `<div></div>`.
 
 3. Implement TagUl. Difficulties with using mapping within grammar. Unsure about to which lengths flippre can be used in these situations.
 
