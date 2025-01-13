@@ -89,8 +89,9 @@ identifier = (Automaton.star allowedChars) `Automaton.difference` Automaton.unio
       , Automaton.range 'A' 'Z'
       , Automaton.range '0' '9'
       , Automaton.singleton '_'
-      , Automaton.singleton ' '   -- TODO: if i have this most things work but case 1 ceases to work...
+      , Automaton.singleton ' '
       , Automaton.singleton '.'
+      , Automaton.singleton '!'
       ]
     
 
@@ -137,11 +138,12 @@ htmlGrammar = parsingMode (flippr $ fromFunction <$> htmlPrettyPrinter)
 -- Function to parse an HTML string into an HtmlExp (remove HTML wrapper)
 parseHtml :: String -> HtmlExp
 parseHtml input = case parser (stripHtmlTags input) of
-  Ok results -> head results
+  Ok results -> normalizeHtmlExpWithLimit 100 (head results) -- Use a limit of 100
   Fail err -> error (show err)
   where
     parser = EarleyParser.parse htmlGrammar
 
+    
 stripHtmlTags :: String -> String
 stripHtmlTags = trim . removePrefixSuffix "<html>" "</html>"
 
@@ -157,9 +159,8 @@ removePrefixSuffix prefix suffix str =
 -- Function to pretty-print HtmlExp to an HTML Doc
 prettyPrintHtml :: HtmlExp -> Doc ann
 prettyPrintHtml expr =
-  text "<html>" <+> pprMode (flippr $ fromFunction <$> htmlPrettyPrinter) expr <+> text "</html>"
-
-
+  let normalizedExpr = normalizeHtmlExpWithLimit 100 expr -- Apply normalization with a limit
+  in text "<html>" <+> pprMode (flippr $ fromFunction <$> htmlPrettyPrinter) normalizedExpr <+> text "</html>"
 
 -- Define a pretty-printer for HtmlExp that generates Markdown text
 markdownPrettyPrinter :: (FliPprD arg exp) => FliPprM exp (A arg HtmlExp -> E exp D)
@@ -211,6 +212,58 @@ parseMarkdown input = case parser input of
 prettyPrintMarkdown :: HtmlExp -> Doc ann
 prettyPrintMarkdown = pprMode (flippr $ fromFunction <$> markdownPrettyPrinter)
 
+
+
+{-
+-- Function to normalize seuqnces that only contains context
+normalizeHtmlExp :: HtmlExp -> HtmlExp
+-- Merge adjacent Content nodes in Sequence
+normalizeHtmlExp (Sequence (Content (Name str1)) (Content (Name str2))) =
+  Content (Name (str1 ++ " " ++ str2))
+-- Recursively normalize left and right in Sequence
+normalizeHtmlExp (Sequence left right) =
+  case (normalizeHtmlExp left, normalizeHtmlExp right) of
+    (Content (Name str1), Content (Name str2)) -> Content (Name (str1 ++ " " ++ str2))
+    (normalizedLeft, normalizedRight) -> Sequence normalizedLeft normalizedRight
+-- Recursively normalize children in all tags
+normalizeHtmlExp (TagH1 child) = TagH1 (normalizeHtmlExp child)
+normalizeHtmlExp (TagH2 child) = TagH2 (normalizeHtmlExp child)
+normalizeHtmlExp (TagH3 child) = TagH3 (normalizeHtmlExp child)
+normalizeHtmlExp (TagH4 child) = TagH4 (normalizeHtmlExp child)
+normalizeHtmlExp (TagH5 child) = TagH5 (normalizeHtmlExp child)
+normalizeHtmlExp (TagBold child) = TagBold (normalizeHtmlExp child)
+normalizeHtmlExp (TagP child) = TagP (normalizeHtmlExp child)
+normalizeHtmlExp (TagDiv child) = TagDiv (normalizeHtmlExp child)
+normalizeHtmlExp (TagLi child) = TagLi (normalizeHtmlExp child)
+-- Leave plain Content nodes as-is
+normalizeHtmlExp content@(Content _) = content
+-}
+
+normalizeHtmlExpWithLimit :: Int -> HtmlExp -> HtmlExp
+normalizeHtmlExpWithLimit 0 expr = expr -- Stop normalization at depth limit
+normalizeHtmlExpWithLimit depth expr = case expr of
+  Sequence left right ->
+    let normalizedLeft = normalizeHtmlExpWithLimit (depth - 1) left
+        normalizedRight = normalizeHtmlExpWithLimit (depth - 1) right
+    in case (normalizedLeft, normalizedRight) of
+         (Content (Name str1), Content (Name str2)) -> Content (Name (str1 ++ " " ++ str2))
+         _ -> Sequence normalizedLeft normalizedRight
+  TagH1 child -> TagH1 (normalizeHtmlExpWithLimit (depth - 1) child)
+  TagH2 child -> TagH2 (normalizeHtmlExpWithLimit (depth - 1) child)
+  TagH3 child -> TagH3 (normalizeHtmlExpWithLimit (depth - 1) child)
+  TagH4 child -> TagH4 (normalizeHtmlExpWithLimit (depth - 1) child)
+  TagH5 child -> TagH5 (normalizeHtmlExpWithLimit (depth - 1) child)
+  TagBold child -> TagBold (normalizeHtmlExpWithLimit (depth - 1) child)
+  TagP child -> TagP (normalizeHtmlExpWithLimit (depth - 1) child)
+  TagDiv child -> TagDiv (normalizeHtmlExpWithLimit (depth - 1) child)
+  TagLi child -> TagLi (normalizeHtmlExpWithLimit (depth - 1) child)
+  -- Repeat for all tag types...
+  Content name -> Content name
+
+
+
+
+
 -- Examples for testing the functionality
 
 -- Example 1: Simple HTML structure <html>helloWorld</html>
@@ -220,18 +273,19 @@ htmlExample1 = Content (Name "helloWorld")
 -- Example 2: Nested HTML structure <html><b>helloWorld</b><h1>helloWorld</h1></html>
 -- TODO: sequence doesn't work as expected
 htmlExample2 :: HtmlExp
-htmlExample2 = Sequence (TagBold (Content (Name "helloWorld"))) (TagH1 (Content (Name "helloWorld")))
+htmlExample2 = Sequence (TagBold (Content (Name "hello World"))) (TagH1 (Content (Name "hello World")))
 
 -- Example 3: Bold text <b>helloWorld</b>
 htmlExample3 :: HtmlExp
-htmlExample3 = TagBold (Content (Name "helloWorld"))
+htmlExample3 = TagBold (Content (Name "hello World. I would like to test the following test hejsan"))
 
 -- Example 4: Header level 3 <h3>helloWorld</h3>
+-- Problem when made into two parts
 htmlExample4 :: HtmlExp
-htmlExample4 = TagH3 (Content (Name "helloWorld"))
+htmlExample4 = TagH3 (Content (Name "hello World"))
 
 htmlExample5 :: HtmlExp
-htmlExample5 = TagP (Content (Name "thisisaparagraph."))
+htmlExample5 = TagP (Content (Name "this is a paragraph."))
 
 htmlExample6a :: HtmlExp
 htmlExample6a = TagLi (Content (Name "Item 1"))
