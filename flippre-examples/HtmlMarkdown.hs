@@ -25,6 +25,8 @@ import Data.Char (isAlphaNum)
 import Prettyprinter (Doc)
 import Text.Printf
 
+import Data.List (isPrefixOf, isSuffixOf)
+
 -- Define a new type for representing names
 newtype Name = Name String
   deriving (Eq, Show)
@@ -40,7 +42,7 @@ data BinOp = Add | Mul
 -- The main data type for representing HTML-like expressions
 data HtmlExp
   = Content Name                -- Represents plain content (text)
-  | TagHtml HtmlExp             -- Represents an <html> tag
+  -- | TagHtml HtmlExp             -- Represents an <html> tag NOT USED AS WE WANT IT AS A WRAPPER INSTEAD
   | TagBold HtmlExp             -- Represents a <b> tag
   | TagH1 HtmlExp               -- Represents a <h1> tag
   | TagH2 HtmlExp               -- Represents a <h2> tag
@@ -111,7 +113,7 @@ htmlPrettyPrinter = do
       ( \_prec expr -> 
           case_ expr
             [ unContent $ \name -> prettyVar name
-            , unTagHtml $ \child -> text "<html>" <+> prettyExp 0 child <+> text "</html>"
+            -- , unTagHtml $ \child -> text "<html>" <+> prettyExp 0 child <+> text "</html>"
             , unTagBold $ \child -> text "<b>" <+> prettyExp 0 child <+> text "</b>"
             , unTagH1 $ \child -> text "<h1>" <+> prettyExp 0 child <+> text "</h1>"
             , unTagH2 $ \child -> text "<h2>" <+> prettyExp 0 child <+> text "</h2>"
@@ -122,7 +124,7 @@ htmlPrettyPrinter = do
             , unTagDiv $ \child -> text "<div>" <+> prettyExp 0 child <+> text "</div>"
             --, unTagUl $ \children -> text "<ul>" <+> mconcat (map (\item -> prettyExp 0 item <+> text "\n") children) <+> text "</ul>"
             , unTagLi $ \child -> text "<li>" <+> prettyExp 0 child <+> text "</li>"
-            , unSequence $ \first second -> prettyExp 0 first <+> text "\n" <+> prettyExp 0 second
+            , unSequence $ \first second -> prettyExp 0 first <+> prettyExp 0 second
             , otherwiseBranch $ parens . prettyExp 0
             ]
       )
@@ -132,18 +134,31 @@ htmlPrettyPrinter = do
 htmlGrammar :: (Grammar.GrammarD Char g) => g (Err ann HtmlExp)
 htmlGrammar = parsingMode (flippr $ fromFunction <$> htmlPrettyPrinter)
 
--- Function to parse an HTML string into an HtmlExp
+-- Function to parse an HTML string into an HtmlExp (remove HTML wrapper)
 parseHtml :: String -> HtmlExp
-parseHtml input = case parser input of
+parseHtml input = case parser (stripHtmlTags input) of
   Ok results -> head results
   Fail err -> error (show err)
   where
-    -- Cache the grammar parser
     parser = EarleyParser.parse htmlGrammar
+
+stripHtmlTags :: String -> String
+stripHtmlTags = trim . removePrefixSuffix "<html>" "</html>"
+
+trim :: String -> String
+trim = unwords . words
+
+removePrefixSuffix :: String -> String -> String -> String
+removePrefixSuffix prefix suffix str =
+  let str' = if prefix `isPrefixOf` str then drop (length prefix) str else str
+  in if suffix `isSuffixOf` str' then take (length str' - length suffix) str' else str'
+    
 
 -- Function to pretty-print HtmlExp to an HTML Doc
 prettyPrintHtml :: HtmlExp -> Doc ann
-prettyPrintHtml = pprMode (flippr $ fromFunction <$> htmlPrettyPrinter)
+prettyPrintHtml expr =
+  text "<html>" <+> pprMode (flippr $ fromFunction <$> htmlPrettyPrinter) expr <+> text "</html>"
+
 
 
 -- Define a pretty-printer for HtmlExp that generates Markdown text
@@ -162,7 +177,7 @@ markdownPrettyPrinter = do
           case_ expr
             [ unContent $ \name -> prettyVar name
             -- I want to get rid of text "" but for some reason the terminal locks when i do that
-            , unTagHtml $ \child -> text "" <+> prettyExp 0 child
+            -- , unTagHtml $ \child -> text "" <+> prettyExp 0 child
             , unTagBold $ \child -> text "**" <+> prettyExp 0 child <+> text "**"
             , unTagH1 $ \child -> prettyExp 0 child <+> text "\n==="
             , unTagH2 $ \child -> prettyExp 0 child <+> text "\n---"
@@ -200,12 +215,12 @@ prettyPrintMarkdown = pprMode (flippr $ fromFunction <$> markdownPrettyPrinter)
 
 -- Example 1: Simple HTML structure <html>helloWorld</html>
 htmlExample1 :: HtmlExp
-htmlExample1 = TagHtml (Content (Name "helloWorld"))
+htmlExample1 = Content (Name "helloWorld")
 
 -- Example 2: Nested HTML structure <html><b>helloWorld</b><h1>helloWorld</h1></html>
 -- TODO: sequence doesn't work as expected
 htmlExample2 :: HtmlExp
-htmlExample2 = TagHtml (Sequence (TagBold (Content (Name "helloWorld"))) (TagH1 (Content (Name "helloWorld"))))
+htmlExample2 = Sequence (TagBold (Content (Name "helloWorld"))) (TagH1 (Content (Name "helloWorld")))
 
 -- Example 3: Bold text <b>helloWorld</b>
 htmlExample3 :: HtmlExp
