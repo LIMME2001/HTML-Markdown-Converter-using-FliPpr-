@@ -47,6 +47,10 @@ data HtmlExp
   | TagH3 HtmlExp               -- Represents a <h3> tag
   | TagH4 HtmlExp               -- Represents a <h4> tag
   | TagH5 HtmlExp               -- Represents a <h5> tag
+  | TagP HtmlExp                -- Represents a <p> tag
+  | TagDiv HtmlExp              -- Represents a <div> tag
+  -- | TagUl [HtmlExp]             -- Represents an unordered list
+  | TagLi HtmlExp               -- Represents a list item
   | Sequence HtmlExp HtmlExp    -- Represents a sequence of HTML elements
   deriving (Eq, Show)
 
@@ -66,12 +70,27 @@ digit = Automaton.range '0' '9'
 digits :: Automaton.DFA Char
 digits = Automaton.plus digit
 
+{-
 -- Define a DFA for recognizing identifiers
 identifier :: Automaton.DFA Char
 identifier = (lowercase <> Automaton.star alphanum) `Automaton.difference` Automaton.unions (map fromString reservedKeywords)
   where
     lowercase = Automaton.unions [Automaton.range 'a' 'z', Automaton.singleton '_']
     alphanum = Automaton.unions [digit, lowercase, Automaton.range 'A' 'Z']
+-}
+
+identifier :: Automaton.DFA Char
+identifier = (Automaton.star allowedChars) `Automaton.difference` Automaton.unions (map fromString reservedKeywords)
+  where
+    allowedChars = Automaton.unions 
+      [ Automaton.range 'a' 'z'
+      , Automaton.range 'A' 'Z'
+      , Automaton.range '0' '9'
+      , Automaton.singleton '_'
+      , Automaton.singleton ' '   -- TODO: if i have this most things work but case 1 ceases to work...
+      , Automaton.singleton '.'
+      ]
+    
 
 -- List of reserved keywords (empty in this example)
 reservedKeywords :: [String]
@@ -99,6 +118,10 @@ htmlPrettyPrinter = do
             , unTagH3 $ \child -> text "<h3>" <+> prettyExp 0 child <+> text "</h3>"
             , unTagH4 $ \child -> text "<h4>" <+> prettyExp 0 child <+> text "</h4>"
             , unTagH5 $ \child -> text "<h5>" <+> prettyExp 0 child <+> text "</h5>"
+            , unTagP $ \child -> text "<p>" <+> prettyExp 0 child <+> text "</p>"
+            , unTagDiv $ \child -> text "<div>" <+> prettyExp 0 child <+> text "</div>"
+            --, unTagUl $ \children -> text "<ul>" <+> mconcat (map (\item -> prettyExp 0 item <+> text "\n") children) <+> text "</ul>"
+            , unTagLi $ \child -> text "<li>" <+> prettyExp 0 child <+> text "</li>"
             , unSequence $ \first second -> prettyExp 0 first <+> text "\n" <+> prettyExp 0 second
             , otherwiseBranch $ parens . prettyExp 0
             ]
@@ -122,6 +145,7 @@ parseHtml input = case parser input of
 prettyPrintHtml :: HtmlExp -> Doc ann
 prettyPrintHtml = pprMode (flippr $ fromFunction <$> htmlPrettyPrinter)
 
+
 -- Define a pretty-printer for HtmlExp that generates Markdown text
 markdownPrettyPrinter :: (FliPprD arg exp) => FliPprM exp (A arg HtmlExp -> E exp D)
 markdownPrettyPrinter = do
@@ -137,6 +161,7 @@ markdownPrettyPrinter = do
       ( \_prec expr -> 
           case_ expr
             [ unContent $ \name -> prettyVar name
+            -- I want to get rid of text "" but for some reason the terminal locks when i do that
             , unTagHtml $ \child -> text "" <+> prettyExp 0 child
             , unTagBold $ \child -> text "**" <+> prettyExp 0 child <+> text "**"
             , unTagH1 $ \child -> prettyExp 0 child <+> text "\n==="
@@ -144,6 +169,10 @@ markdownPrettyPrinter = do
             , unTagH3 $ \child -> text "###" <+> prettyExp 0 child
             , unTagH4 $ \child -> text "####" <+> prettyExp 0 child
             , unTagH5 $ \child -> text "#####" <+> prettyExp 0 child
+            , unTagP $ \child -> prettyExp 0 child <+> text "\n"
+            , unTagDiv $ \child -> prettyExp 0 child <+> text "\n"
+            --, unTagUl $ \children -> mconcat (map (\item -> text "- " <+> prettyExp 0 item <+> text "\n") children)
+            , unTagLi $ \child -> text "- " <+> prettyExp 0 child
             , unSequence $ \first second -> text "<div>" <+> prettyExp 0 first <+> prettyExp 0 second <+> text "</div>"
             , otherwiseBranch $ parens . prettyExp 0
             ]
@@ -186,15 +215,17 @@ htmlExample3 = TagBold (Content (Name "helloWorld"))
 htmlExample4 :: HtmlExp
 htmlExample4 = TagH3 (Content (Name "helloWorld"))
 
--- Example HTML text for comparison
-htmlTextDoc1 :: Doc ann
-htmlTextDoc1 = text "<html> helloWorld </html>"
+htmlExample5 :: HtmlExp
+htmlExample5 = TagP (Content (Name "thisisaparagraph."))
 
-htmlTextDoc2 :: Doc ann
-htmlTextDoc2 = text "<html> <b> helloWorld </b> </html>"
+htmlExample6a :: HtmlExp
+htmlExample6a = TagLi (Content (Name "Item 1"))
 
-htmlTextDoc3 :: Doc ann
-htmlTextDoc3 = text "<h1> helloWorld </h1>"
+htmlExample6b :: HtmlExp
+htmlExample6b = TagLi (Content (Name "Item 2"))
+
+htmlExample7 :: HtmlExp
+htmlExample7 = TagDiv (Sequence htmlExample6a htmlExample6b)
 
 -- Main function to test examples
 main :: IO ()
@@ -235,12 +266,30 @@ main = do
   testExample htmlExample2 "Example 2: <html><b>helloWorld</b><h1>helloWorld</h1></html>"
   testExample htmlExample3 "Example 3: <b>helloWorld</b>"
   testExample htmlExample4 "Example 4: <h3>helloWorld</h3>"
+  testExample htmlExample5 "Example 5: <p>This is a Paragraph</p>"
+  testExample htmlExample6a "Example 6a: <div><h1>Title</h1><ul><li>Item 1</li><li>Item 2</li></ul></div>"
+  testExample htmlExample6b "Example 6b: <div><h1>Title</h1><ul><li>Item 1</li><li>Item 2</li></ul></div>"
+  testExample htmlExample7 "Example 7: <div><h1>Title</h1><ul><li>Item 1</li><li>Item 2</li></ul></div>"
 
 
 
 
 
 {-
+
+-- Example HTML text for comparison
+htmlTextDoc1 :: Doc ann
+htmlTextDoc1 = text "<html> helloWorld </html>"
+
+htmlTextDoc2 :: Doc ann
+htmlTextDoc2 = text "<html> <b> helloWorld </b> </html>"
+
+htmlTextDoc3 :: Doc ann
+htmlTextDoc3 = text "<h1> helloWorld </h1>"
+
+
+
+
 main :: IO ()
 main = do
   ---------- HTML -----------
