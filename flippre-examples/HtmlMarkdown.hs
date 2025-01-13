@@ -174,6 +174,7 @@ htmlExample1 :: HtmlExp
 htmlExample1 = TagHtml (Content (Name "helloWorld"))
 
 -- Example 2: Nested HTML structure <html><b>helloWorld</b><h1>helloWorld</h1></html>
+-- TODO: sequence doesn't work as expected
 htmlExample2 :: HtmlExp
 htmlExample2 = TagHtml (Sequence (TagBold (Content (Name "helloWorld"))) (TagH1 (Content (Name "helloWorld"))))
 
@@ -199,37 +200,35 @@ htmlTextDoc3 = text "<h1> helloWorld </h1>"
 main :: IO ()
 main = do
   let testExample example name = do
-        putStrLn $ replicate 80 '+'
-        putStrLn $ "Testing: " ++ name
-        putStrLn $ replicate 80 '-'
+        putStrLn $ replicate 80 '='
+        putStrLn $ "Testing Example: " ++ name
+        putStrLn $ replicate 80 '='
 
         -- Pretty-print example as HTML
         let htmlDoc = show (prettyPrintHtml example)
-        putStrLn "HTML Output:"
-        putStrLn htmlDoc
+        putStrLn $ "HTML Output: " ++ htmlDoc
 
         -- Parse the HTML output back to HtmlExp
         let parsedHtmlExp = parseHtml htmlDoc
-        putStrLn "Parsed HtmlExp (from HTML):"
-        print parsedHtmlExp
+        putStrLn $ "Parsed HtmlExp (from HTML): " ++ show parsedHtmlExp
 
         -- Verify that parsing round-trips correctly
-        putStrLn "Round-Trip (HTML):"
-        print (parsedHtmlExp == example)
+        putStrLn $ "Round-Trip (HTML): " ++ show (parsedHtmlExp == example)
+
+        putStrLn $ replicate 40 '-'
 
         -- Convert HtmlExp to Markdown
         let markdownDoc = show (prettyPrintMarkdown example)
-        putStrLn "Markdown Output:"
-        putStrLn markdownDoc
+        putStrLn $ "Markdown Output: " ++ markdownDoc
 
         -- Parse Markdown back to HtmlExp using parseMarkdown
         let parsedMarkdownExp = parseMarkdown markdownDoc
-        putStrLn "Parsed HtmlExp (from Markdown):"
-        print parsedMarkdownExp
+        putStrLn $ "Parsed HtmlExp (from Markdown): " ++ show parsedMarkdownExp
 
         -- Verify that Markdown parsing round-trips correctly
-        putStrLn "Round-Trip (Markdown):"
-        print (parsedMarkdownExp == example)
+        putStrLn $ "Round-Trip (Markdown): " ++ show (parsedMarkdownExp == example)
+
+        putStrLn ""
 
   -- Test each example
   testExample htmlExample1 "Example 1: <html>helloWorld</html>"
