@@ -18,19 +18,19 @@ This project uses the FliPpr library to define **invertible transformations**:
 
 ### Supported HTML and Markdown Elements
 
-| **HTML Tag** | **Markdown Syntax**       |
-|--------------|---------------------------|
-| `<b>`        | `**bold text**`           |
-| `<h1>`       | `text\n===`               |
-| `<h2>`       | `text\n---`               |
-| `<h3>`       | `### text`                |
-| `<h4>`       | `#### text`               |
-| `<h5>`       | `##### text`              |
-| `<p>`        | `text\n`                  |
-| `<div>`      | `Concatenation (newlines)`|
-| `<li>`       | `- text`                  |
-| Sequence     | Concatenation (newlines)  |
-
+| **HTML Tag** | **Markdown Syntax**       | **`HtmlExp` Representation**              |
+|--------------|---------------------------|-------------------------------------------|
+| `<b>`        | `**bold text**`           | `TagBold HtmlExp`                         |
+| `<h1>`       | `text\n===`               | `TagH1 HtmlExp`                           |
+| `<h2>`       | `text\n---`               | `TagH2 HtmlExp`                           |
+| `<h3>`       | `### text`                | `TagH3 HtmlExp`                           |
+| `<h4>`       | `#### text`               | `TagH4 HtmlExp`                           |
+| `<h5>`       | `##### text`              | `TagH5 HtmlExp`                           |
+| `<p>`        | `text\n`                  | `TagP HtmlExp`                            |
+| `<div>`      | Concatenation (newlines)  | `TagDiv HtmlExp`                          |
+| `<li>`       | `- text`                  | `TagLi HtmlExp`                           |
+| Sequence     | Concatenation (newlines)  | `Sequence HtmlExp HtmlExp`                |
+| Plain text   | Plain text (no markup)    | `Content (Name "text")`                   |
 
 ## Getting Started
 
