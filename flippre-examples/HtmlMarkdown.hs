@@ -13,177 +13,181 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE NoMonomorphismRestriction #-}
 
+-- Import necessary libraries and modules
 import Text.FliPpr
-import qualified Text.FliPpr.Automaton as AM
-
-import qualified Text.FliPpr.Grammar as G
-import qualified Text.FliPpr.Grammar.Driver.Earley as E
+import qualified Text.FliPpr.Automaton as Automaton
+import qualified Text.FliPpr.Grammar as Grammar
+import qualified Text.FliPpr.Grammar.Driver.Earley as EarleyParser
 
 import Data.String (fromString)
 import Data.Char (isAlphaNum)
 
-
 import Prettyprinter (Doc)
 import Text.Printf
 
+-- Define a new type for representing names
 newtype Name = Name String
   deriving (Eq, Show)
 
-data Lit
-  = LString String
+-- Define a type for literals (currently only strings)
+data Lit = LString String
   deriving (Eq, Show)
 
+-- Define a type for binary operations (addition and multiplication)
 data BinOp = Add | Mul
   deriving (Eq, Show)
 
--- The data type for representing HTML expressions
+-- The main data type for representing HTML-like expressions
 data HtmlExp
-  = Content Name 
-  | TagHtml HtmlExp
-  | TagBold HtmlExp
-  | TagH1 HtmlExp
-  | TagH2 HtmlExp
-  | TagH3 HtmlExp
-  | TagH4 HtmlExp
-  | TagH5 HtmlExp
-  | Sequence HtmlExp HtmlExp
+  = Content Name                -- Represents plain content (text)
+  | TagHtml HtmlExp             -- Represents an <html> tag
+  | TagBold HtmlExp             -- Represents a <b> tag
+  | TagH1 HtmlExp               -- Represents a <h1> tag
+  | TagH2 HtmlExp               -- Represents a <h2> tag
+  | TagH3 HtmlExp               -- Represents a <h3> tag
+  | TagH4 HtmlExp               -- Represents a <h4> tag
+  | TagH5 HtmlExp               -- Represents a <h5> tag
+  | Sequence HtmlExp HtmlExp    -- Represents a sequence of HTML elements
   deriving (Eq, Show)
 
+-- Generate partial bijections for the HtmlExp type
 $(mkUn ''Name)
 $(mkUn ''HtmlExp)
 $(mkUn ''Lit)
 
-otherwiseP :: (arg HtmlExp -> exp t) -> Branch arg exp HtmlExp t
-otherwiseP = Branch (PartialBij "otherwiseP" Just Just)
+-- A helper function for "otherwise" branches in pattern matching
+otherwiseBranch :: (arg HtmlExp -> exp t) -> Branch arg exp HtmlExp t
+otherwiseBranch = Branch (PartialBij "otherwiseBranch" Just Just)
 
-number :: AM.DFA Char
-number = AM.range '0' '9'
+-- Define finite state automata for recognizing numbers
+digit :: Automaton.DFA Char
+digit = Automaton.range '0' '9'
 
-numbers :: AM.DFA Char
-numbers = AM.plus number
+digits :: Automaton.DFA Char
+digits = Automaton.plus digit
 
-ident :: AM.DFA Char
-ident = (small <> AM.star alphaNum) `AM.difference` AM.unions (map fromString keywords)
+-- Define a DFA for recognizing identifiers
+identifier :: Automaton.DFA Char
+identifier = (lowercase <> Automaton.star alphanum) `Automaton.difference` Automaton.unions (map fromString reservedKeywords)
   where
-    small = AM.unions [AM.range 'a' 'z', AM.singleton '_']
-    alphaNum = AM.unions [number, small, AM.range 'A' 'Z']
+    lowercase = Automaton.unions [Automaton.range 'a' 'z', Automaton.singleton '_']
+    alphanum = Automaton.unions [digit, lowercase, Automaton.range 'A' 'Z']
 
+-- List of reserved keywords (empty in this example)
+reservedKeywords :: [String]
+reservedKeywords = []
 
-keywords :: [String]
-keywords = []
+-- Define a pretty-printer for HtmlExp that generates HTML text
+htmlPrettyPrinter :: (FliPprD arg exp) => FliPprM exp (A arg HtmlExp -> E exp D)
+htmlPrettyPrinter = do
+  -- Pretty-printer for names
+  prettyName <- share $ \name -> case_ name [unName $ \str -> textAs str identifier]
 
--- Define how to convert between HtmlExp and raw text html Doc ann
-flipprExp1 :: (FliPprD arg exp) => FliPprM exp (A arg HtmlExp -> E exp D)
-flipprExp1 = do
-  pprName <- share $ \x -> case_ x [unName $ \s -> textAs (s) ident]
+  -- Use prettyName for variable-like structures
+  let prettyVar = prettyName
 
-  let pprVar = pprName
-
-  letrs [0] $ \pExp ->
+  -- Define the pretty-printer logic for HtmlExp
+  letrs [0] $ \prettyExp -> do
     def
-      ( \prec x ->
-            case_
-                x
-                [ unContent $ \n -> pprVar n
-                , unTagHtml $ \e1 -> text "<html>" <+> pExp 0 e1 <+> text "</html>"
-                , unTagBold $ \e1 -> text "<b>" <+> pExp 0 e1 <+> text "</b>"
-                , unTagH1 $ \e1 -> text "<h1>" <+> pExp 0 e1 <+> text "</h1>"
-                , unTagH2 $ \e1 -> text "<h2>" <+> pExp 0 e1 <+> text "</h2>"
-                , unTagH3 $ \e1 -> text "<h3>" <+> pExp 0 e1 <+> text "</h3>"
-                , unTagH4 $ \e1 -> text "<h4>" <+> pExp 0 e1 <+> text "</h4>"
-                , unTagH5 $ \e1 -> text "<h5>" <+> pExp 0 e1 <+> text "</h5>"
-                , unSequence $ \e1 e2 -> pExp 0 e1 <+> pExp 0 e2
-                , otherwiseP $ parens . pExp 0
-                ]
+      ( \_prec expr -> 
+          case_ expr
+            [ unContent $ \name -> prettyVar name
+            , unTagHtml $ \child -> text "<html>" <+> prettyExp 0 child <+> text "</html>"
+            , unTagBold $ \child -> text "<b>" <+> prettyExp 0 child <+> text "</b>"
+            , unTagH1 $ \child -> text "<h1>" <+> prettyExp 0 child <+> text "</h1>"
+            , unTagH2 $ \child -> text "<h2>" <+> prettyExp 0 child <+> text "</h2>"
+            , unTagH3 $ \child -> text "<h3>" <+> prettyExp 0 child <+> text "</h3>"
+            , unTagH4 $ \child -> text "<h4>" <+> prettyExp 0 child <+> text "</h4>"
+            , unTagH5 $ \child -> text "<h5>" <+> prettyExp 0 child <+> text "</h5>"
+            , unSequence $ \first second -> prettyExp 0 first <+> prettyExp 0 second
+            , otherwiseBranch $ parens . prettyExp 0
+            ]
       )
-      ( return (pExp 0) )
+      (return (prettyExp 0))
 
-gExp1 :: (G.GrammarD Char g) => g (Err ann HtmlExp)
-gExp1 = parsingMode (flippr $ fromFunction <$> flipprExp1)
+-- Define a grammar for parsing HTML expressions
+htmlGrammar :: (Grammar.GrammarD Char g) => g (Err ann HtmlExp)
+htmlGrammar = parsingMode (flippr $ fromFunction <$> htmlPrettyPrinter)
 
-parseHtmlTextDoc1 :: [Char] -> HtmlExp
-parseHtmlTextDoc1 = \s -> case p s of
-  Ok r -> head r
-  Fail e -> error (show e)
+-- Function to parse an HTML string into an HtmlExp
+parseHtml :: String -> HtmlExp
+parseHtml input = case parser input of
+  Ok results -> head results
+  Fail err -> error (show err)
   where
-    -- This assignment is important; otherwise, gExp1 is evaluated again for calls of parseHtmlTextDoc1.
-    p = E.parse gExp1
+    -- Cache the grammar parser
+    parser = EarleyParser.parse htmlGrammar
 
-pprHtmlExp1 :: HtmlExp -> Doc ann
-pprHtmlExp1 = pprMode (flippr $ fromFunction <$> flipprExp1)
-  
--- Define how to convert between HtmlExp and markdown text Doc ann
-flipprExp2 :: (FliPprD arg exp) => FliPprM exp (A arg HtmlExp -> E exp D)
-flipprExp2 = do
-  pprName <- share $ \x -> case_ x [unName $ \s -> textAs (s) ident]
+-- Function to pretty-print HtmlExp to an HTML Doc
+prettyPrintHtml :: HtmlExp -> Doc ann
+prettyPrintHtml = pprMode (flippr $ fromFunction <$> htmlPrettyPrinter)
 
-  let pprVar = pprName
+-- Define a pretty-printer for HtmlExp that generates Markdown text
+markdownPrettyPrinter :: (FliPprD arg exp) => FliPprM exp (A arg HtmlExp -> E exp D)
+markdownPrettyPrinter = do
+  -- Pretty-printer for names
+  prettyName <- share $ \name -> case_ name [unName $ \str -> textAs str identifier]
 
-  letrs [0] $ \pExp ->
+  -- Use prettyName for variable-like structures
+  let prettyVar = prettyName
+
+  -- Define the pretty-printer logic for Markdown
+  letrs [0] $ \prettyExp -> do
     def
-      ( \prec x ->
-            case_
-                x
-                [ unContent $ \n -> pprVar n
-                , unTagHtml $ \e1 -> text "" <+> pExp 0 e1
-                , unTagBold $ \e1 -> text "**" <+> pExp 0 e1 <+> text "**"
-                , unTagH1 $ \e1 -> pExp 0 e1 <+> text "\n==="
-                , unTagH2 $ \e1 -> pExp 0 e1 <+> text "\n---"
-                , unTagH3 $ \e1 -> text "###" <+> pExp 0 e1
-                , unTagH4 $ \e1 -> text "####" <+> pExp 0 e1
-                , unTagH5 $ \e1 -> text "#####" <+> pExp 0 e1
-                , unSequence $ \e1 e2 -> pExp 0 e1 <+> text "\n" <+> pExp 0 e2
-                , otherwiseP $ parens . pExp 0
-                ]
+      ( \_prec expr -> 
+          case_ expr
+            [ unContent $ \name -> prettyVar name
+            , unTagHtml $ \child -> text "" <+> prettyExp 0 child
+            , unTagBold $ \child -> text "**" <+> prettyExp 0 child <+> text "**"
+            , unTagH1 $ \child -> prettyExp 0 child <+> text "\n==="
+            , unTagH2 $ \child -> prettyExp 0 child <+> text "\n---"
+            , unTagH3 $ \child -> text "###" <+> prettyExp 0 child
+            , unTagH4 $ \child -> text "####" <+> prettyExp 0 child
+            , unTagH5 $ \child -> text "#####" <+> prettyExp 0 child
+            , unSequence $ \first second -> prettyExp 0 first <+> text "\n" <+> prettyExp 0 second
+            , otherwiseBranch $ parens . prettyExp 0
+            ]
       )
-      ( return (pExp 0) )
+      (return (prettyExp 0))
 
-gExp2 :: (G.GrammarD Char g) => g (Err ann HtmlExp)
-gExp2 = parsingMode (flippr $ fromFunction <$> flipprExp2)
+-- Define a grammar for parsing Markdown expressions
+markdownGrammar :: (Grammar.GrammarD Char g) => g (Err ann HtmlExp)
+markdownGrammar = parsingMode (flippr $ fromFunction <$> markdownPrettyPrinter)
 
-pprHtmlExp2 :: HtmlExp -> Doc ann
-pprHtmlExp2 = pprMode (flippr $ fromFunction <$> flipprExp2)
-
-parseHtmlTextDoc2 :: [Char] -> HtmlExp
-parseHtmlTextDoc2 = \s -> case p s of
-  Ok r -> head r
-  Fail e -> error (show e)
+-- Function to parse a Markdown string into an HtmlExp
+parseMarkdown :: String -> HtmlExp
+parseMarkdown input = case parser input of
+  Ok results -> head results
+  Fail err -> error (show err)
   where
-    -- This assignment is important; otherwise, gExp2 is evaluated again for calls of parseHtmlTextDoc1.
-    p = E.parse gExp2
+    -- Cache the grammar parser
+    parser = EarleyParser.parse markdownGrammar
 
+-- Function to pretty-print HtmlExp to a Markdown Doc
+prettyPrintMarkdown :: HtmlExp -> Doc ann
+prettyPrintMarkdown = pprMode (flippr $ fromFunction <$> markdownPrettyPrinter)
 
--- Example HTML expressions:
+-- Examples for testing the functionality
 
 -- Example 1: Simple HTML structure <html>helloWorld</html>
-htmlExp1 :: HtmlExp
-htmlExp1 = 
-  TagHtml (Content (Name "helloWorld"))
+htmlExample1 :: HtmlExp
+htmlExample1 = TagHtml (Content (Name "helloWorld"))
 
--- Example 2: HTML with bold and header
--- <html><b>helloWorld</b><h1>helloWorld</h1></html>
-htmlExp2 :: HtmlExp
-htmlExp2 = 
-  TagHtml (Sequence 
-    (TagBold (Content (Name "helloWorld")))
-    (TagH1 (Content (Name "helloWorld")))
-  )
+-- Example 2: Nested HTML structure <html><b>helloWorld</b><h1>helloWorld</h1></html>
+htmlExample2 :: HtmlExp
+htmlExample2 = TagHtml (Sequence (TagBold (Content (Name "helloWorld"))) (TagH1 (Content (Name "helloWorld"))))
 
 -- Example 3: Bold text <b>helloWorld</b>
-htmlExp3 :: HtmlExp
-htmlExp3 = 
-  TagBold (Content (Name "helloWorld"))
+htmlExample3 :: HtmlExp
+htmlExample3 = TagBold (Content (Name "helloWorld"))
 
 -- Example 4: Header level 3 <h3>helloWorld</h3>
-htmlExp4 :: HtmlExp
-htmlExp4 = 
-  TagH3 (Content (Name "helloWorld"))
+htmlExample4 :: HtmlExp
+htmlExample4 = TagH3 (Content (Name "helloWorld"))
 
-
--- Corresponding raw HTML text for comparison (without spaces would be optimal):
--- TODO: make sure it works without spaces as well (as html is written)
-htmlTextDoc :: Doc ann
-htmlTextDoc = text "<html> helloWorld </html>"
+-- Example HTML text for comparison
+htmlTextDoc1 :: Doc ann
+htmlTextDoc1 = text "<html> helloWorld </html>"
 
 htmlTextDoc2 :: Doc ann
 htmlTextDoc2 = text "<html> <b> helloWorld </b> </html>"
@@ -191,21 +195,21 @@ htmlTextDoc2 = text "<html> <b> helloWorld </b> </html>"
 htmlTextDoc3 :: Doc ann
 htmlTextDoc3 = text "<h1> helloWorld </h1>"
 
+-- Main function to test examples
 main :: IO ()
 main = do
-  -- Function to test a single HtmlExp example
   let testExample example name = do
         putStrLn $ replicate 80 '+'
         putStrLn $ "Testing: " ++ name
         putStrLn $ replicate 80 '-'
 
         -- Pretty-print example as HTML
-        let htmlDoc = show (pprHtmlExp1 example)
+        let htmlDoc = show (prettyPrintHtml example)
         putStrLn "HTML Output:"
         putStrLn htmlDoc
 
         -- Parse the HTML output back to HtmlExp
-        let parsedHtmlExp = parseHtmlTextDoc1 htmlDoc
+        let parsedHtmlExp = parseHtml htmlDoc
         putStrLn "Parsed HtmlExp (from HTML):"
         print parsedHtmlExp
 
@@ -214,12 +218,12 @@ main = do
         print (parsedHtmlExp == example)
 
         -- Convert HtmlExp to Markdown
-        let markdownDoc = show (pprHtmlExp2 example)
+        let markdownDoc = show (prettyPrintMarkdown example)
         putStrLn "Markdown Output:"
         putStrLn markdownDoc
 
-        -- Parse Markdown back to HtmlExp using parseHtmlTextDoc2
-        let parsedMarkdownExp = parseHtmlTextDoc2 markdownDoc
+        -- Parse Markdown back to HtmlExp using parseMarkdown
+        let parsedMarkdownExp = parseMarkdown markdownDoc
         putStrLn "Parsed HtmlExp (from Markdown):"
         print parsedMarkdownExp
 
@@ -228,10 +232,10 @@ main = do
         print (parsedMarkdownExp == example)
 
   -- Test each example
-  testExample htmlExp1 "Example 1: <html>helloWorld</html>"
-  testExample htmlExp2 "Example 2: <html><b>helloWorld</b><h1>helloWorld</h1></html>"
-  testExample htmlExp3 "Example 3: <b>helloWorld</b>"
-  testExample htmlExp4 "Example 4: <h3>helloWorld</h3>"
+  testExample htmlExample1 "Example 1: <html>helloWorld</html>"
+  testExample htmlExample2 "Example 2: <html><b>helloWorld</b><h1>helloWorld</h1></html>"
+  testExample htmlExample3 "Example 3: <b>helloWorld</b>"
+  testExample htmlExample4 "Example 4: <h3>helloWorld</h3>"
 
 
 
