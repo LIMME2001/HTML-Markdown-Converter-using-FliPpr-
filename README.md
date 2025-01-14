@@ -94,7 +94,7 @@ To add new tags or Markdown syntax:
 1. The unsequence process for markdown conversion is incorrect, but without the div example 3 takes forever (more than 49437.5 ms) and it gets a completely wrong parsed expression due to flippre not handling the parsing of sequence correctly without a sence for the scope of each group.
 2. The sentence length is limited due to recursion that reformats the sequence expression to ensure correct round-trips. This leads to exponentially long execution times when the sentence length increases.
 
-3. TagP and TagDiv are at the moment identical in markdown since the representation of these tags are identical in Markdown. This leads to problems when destinguishing how to convert text from markdown including `<div></div>`.
+3. TagP and TagDiv (and sequence in some cases) are at the moment identical in markdown since the representation of these tags are identical in Markdown. This leads to problems when destinguishing how to convert text from markdown including `<div></div>`.
 
 4. Implement TagUl. Difficulties with using mapping within grammar. Unsure about to which lengths flippre can be used in these situations.
 
