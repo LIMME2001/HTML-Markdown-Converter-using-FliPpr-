@@ -91,13 +91,14 @@ To add new tags or Markdown syntax:
    Add logic to handle the new tag in parseHtml and parseMarkdown.
 
 ## Known issues/TODO
-1. The sentence length is limited due to recursion that reformats the sequence expression to ensure correct round-trips. This leads to exponentially long execution times when the sentence length increases.
+1. The unsequence process for markdown conversion is incorrect, but without the div example 3 takes forever (more than 49437.5 ms) and it gets a completely wrong parsed expression due to flippre not handling the parsing of sequence correctly without a sence for the scope of each group.
+2. The sentence length is limited due to recursion that reformats the sequence expression to ensure correct round-trips. This leads to exponentially long execution times when the sentence length increases.
 
-2. TagP and TagDiv are at the moment identical in markdown since the representation of these tags are identical in Markdown. This leads to problems when destinguishing how to convert text from markdown including `<div></div>`.
+3. TagP and TagDiv are at the moment identical in markdown since the representation of these tags are identical in Markdown. This leads to problems when destinguishing how to convert text from markdown including `<div></div>`.
 
-3. Implement TagUl. Difficulties with using mapping within grammar. Unsure about to which lengths flippre can be used in these situations.
+4. Implement TagUl. Difficulties with using mapping within grammar. Unsure about to which lengths flippre can be used in these situations.
 
-4. The sequence expression should be able to handle a large amount of arguments/expressions but since flipper isn't good at handling mapping I'm unsure about a proper implementation. To this point a lot of issues regarding datastructures and types have arisen when solutions have been tested for. 
+5. The sequence expression should be able to handle a large amount of arguments/expressions but since flipper isn't good at handling mapping I'm unsure about a proper implementation. To this point a lot of issues regarding datastructures and types have arisen when solutions have been tested for. 
 
 
 
