@@ -92,3 +92,8 @@ executable c
     main-is: C.hs
     build-depends: prettyprinter
     other-modules: Helper, Literals, TypeSpecifier, Exp, Types
+
+executable html-markdown
+    import: warnings, deps
+    main-is: HtmlMarkdown.hs
+    build-depends: deepseq, prettyprinter

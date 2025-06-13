@@ -6,9 +6,7 @@
 -- To suppress warnings caused by TH code.
 {-# LANGUAGE MonoLocalBinds #-}
 {-# LANGUAGE MultiWayIf #-}
-{-# LANGUAGE QualifiedDo #-}
 {-# LANGUAGE RankNTypes #-}
-{-# LANGUAGE RecursiveDo #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TupleSections #-}
@@ -20,8 +18,6 @@ import qualified Text.FliPpr.Automaton as AM
 
 import qualified Text.FliPpr.Grammar as G
 import qualified Text.FliPpr.Grammar.Driver.Earley as E
-
-import qualified Text.FliPpr.QDo as F
 
 import Data.String (fromString)
 
@@ -53,11 +49,17 @@ $(mkUn ''Lit)
 otherwiseP :: (arg Exp -> exp t) -> Branch arg exp Exp t
 otherwiseP = Branch (PartialBij "otherwiseP" Just Just)
 
-itoaBij :: PartialBij Int String
-itoaBij = PartialBij "itoa" (Just . show) $ \s ->
-  case reads s of
-    (n, "") : _ -> pure n
-    _ -> Nothing
+atoiP :: (arg String -> exp t) -> Branch arg exp Int t
+atoiP =
+  Branch
+    ( PartialBij
+        "atoi"
+        (Just . show)
+        (\s -> l2m $ do (n, "") <- reads s; return n)
+    )
+  where
+    l2m [] = Nothing
+    l2m (x : _) = Just x
 
 number :: AM.DFA Char
 number = AM.range '0' '9'
@@ -75,9 +77,9 @@ keywords :: [String]
 keywords = ["true", "false", "let", "in", "if", "then", "else"]
 
 flipprExp :: (FliPprD arg exp) => FliPprM exp (A arg Exp -> E exp D)
-flipprExp = F.do
+flipprExp = do
   pprName <- share $ \x -> case_ x [unName $ \s -> textAs s ident]
-  pprInt <- share $ \n -> convertInput itoaBij n $ \s -> textAs s numbers
+  pprInt <- share $ \n -> case_ n [atoiP $ \s -> textAs s numbers]
   pprBool <- share $ \b -> case_ b [unTrue $ text "true", unFalse $ text "false"]
 
   let pprLet p n e1 e2 =
@@ -98,7 +100,7 @@ flipprExp = F.do
               | AssocL <- assoc = (0, 1)
               | AssocR <- assoc = (1, 0)
               | AssocN <- assoc = (1, 1)
-        in  p (fromIntegral prec + dl) e1 <+>. text opS <+>. p (fromIntegral prec + dr) e2
+        in  p (prec + dl) e1 <+>. text opS <+>. p (prec + dr) e2
 
   let pprVar = pprName
   let pprLit l =
@@ -110,37 +112,40 @@ flipprExp = F.do
 
   -- Technique mentioned in http://www.haskellforall.com/2020/11/pretty-print-syntax-trees-with-this-one.html.
   -- A trick is that patterns are intentionally overlapping, so that it can parse ugly string, wihtout <?
-  rec pExp <- share $ \(prec :: FinNE Nat4) x ->
-        if
-          | prec == 0 ->
-              case_
-                x
-                [ unLet $ \n e1 e2 -> pprLet pExp n e1 e2
-                , unIf $ \e0 e1 e2 -> pprIf pExp e0 e1 e2
-                , otherwiseP $ pExp (prec + 1)
-                ]
-          | prec == 1 ->
-              case_
-                x
-                [ $(pat 'Op) $(pat 'Add) varP varP `br` \e1 e2 -> pprOp pExp (Fixity AssocL 1) "+" e1 e2
-                , otherwiseP $ pExp (prec + 1)
-                ]
-          | prec == 2 ->
-              case_
-                x
-                [ --  $(branch [p| Op Mul e1 e2 |] [| pprOp pExp (Fixity AssocL 2)  "*" e1 e2 |]),
-                  -- compostional approach to pattern matching
-                  br ($(pat 'Op) $(pat 'Mul) varP varP) $ \e1 e2 -> pprOp pExp (Fixity AssocL 2) "*" e1 e2
-                , otherwiseP $ pExp (prec + 1)
-                ]
-          | otherwise ->
-              case_
-                x
-                [ unVar $ \n -> pprVar n
-                , unLiteral $ \l -> pprLit l
-                , otherwiseP $ parens . pExp 0
-                ]
-  pure (pExp 0)
+  letrs [0 .. 3] $ \pExp ->
+    def
+      ( \prec x ->
+          if
+            | prec == 0 ->
+                case_
+                  x
+                  [ unLet $ \n e1 e2 -> pprLet pExp n e1 e2
+                  , unIf $ \e0 e1 e2 -> pprIf pExp e0 e1 e2
+                  , otherwiseP $ pExp (prec + 1)
+                  ]
+            | prec == 1 ->
+                case_
+                  x
+                  [ $(pat 'Op) $(pat 'Add) varP varP `br` \e1 e2 -> pprOp pExp (Fixity AssocL 1) "+" e1 e2
+                  , otherwiseP $ pExp (prec + 1)
+                  ]
+            | prec == 2 ->
+                case_
+                  x
+                  [ --  $(branch [p| Op Mul e1 e2 |] [| pprOp pExp (Fixity AssocL 2)  "*" e1 e2 |]),
+                    -- compostional approach to pattern matching
+                    br ($(pat 'Op) $(pat 'Mul) varP varP) $ \e1 e2 -> pprOp pExp (Fixity AssocL 2) "*" e1 e2
+                  , otherwiseP $ pExp (prec + 1)
+                  ]
+            | otherwise ->
+                case_
+                  x
+                  [ unVar $ \n -> pprVar n
+                  , unLiteral $ \l -> pprLit l
+                  , otherwiseP $ parens . pExp 0
+                  ]
+      )
+      $ return (pExp 0)
 
 gExp :: (G.GrammarD Char g) => g (Err ann Exp)
 gExp = parsingModeWith (CommentSpec (Just "--") (Just $ BlockCommentSpec "{-" "-}" True)) (flippr $ fromFunction <$> flipprExp)
