@@ -12,16 +12,23 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE DerivingVia #-}
 
+{-
+unElement and unText where do they come from?
+-}
+
 import Text.FliPpr
 import qualified Text.FliPpr.Automaton as AM
 import qualified Text.FliPpr.Grammar as G
 import qualified Text.FliPpr.Grammar.Driver.Earley as E
+-- New parser not uploaded yet
+-- import qualified Text.FliPpr.Grammar.Driver.Frost as Fr
 import qualified Text.FliPpr.QDo as F
 
 import Data.String (fromString)
 import Debug.Trace (trace)
 import qualified Prettyprinter as PP (Doc)
 import Data.List (isPrefixOf, isSuffixOf)
+import qualified Text.FliPpr.Grammar as G (pprAsFlat) -- New import check exactly what this does
 
 -- New data type structures compared to before
 data Tag = Bold | H1 | H2 | H3 | H4 | H5 | P | Div | Li | Ul | Ol
@@ -30,14 +37,13 @@ data Tag = Bold | H1 | H2 | H3 | H4 | H5 | P | Div | Li | Ul | Ol
 data Doc
     = Text String
     | Element Tag [Doc]
-    | Sequence [Doc]
     deriving stock (Eq, Show)
 
 $(mkUn ''Tag)
 $(mkUn ''Doc)
 
 plainText :: AM.DFA Char
-plainText = AM.star (AM.unions [
+plainText = AM.plus (AM.unions [ -- AM.plus instead of AM.star to avoid empty strings
     AM.range 'a' 'z',
     AM.range 'A' 'Z',
     AM.range '0' '9',
@@ -53,40 +59,93 @@ plainText = AM.star (AM.unions [
 -- Markdown pretty printer
 pprMarkdown :: (FliPprD arg exp) => FliPprM exp (A arg Doc -> E exp D)
 pprMarkdown = F.do
+    -- Shared tag formatting - similar to pprTag in HTML but for markdown prefixes/suffixes
+    pprTagPrefix <- share $ \tag ->
+        case_ tag 
+            [ unBold $ text "**"
+            , unH1 $ text ""
+            , unH2 $ text ""
+            , unH3 $ text "### "
+            , unH4 $ text "#### "
+            , unH5 $ text "##### "
+            , unP $ text ""
+            , unDiv $ text ""
+            , unLi $ text "- "
+            , unUl $ text ""
+            , unOl $ text ""
+            ]
+
+    pprTagSuffix <- share $ \tag ->
+        case_ tag 
+            [ unBold $ text "**"
+            , unH1 $ text "\n" <#> text (replicate 20 '=')
+            , unH2 $ text "\n" <#> text (replicate 20 '-')
+            , unH3 $ text ""
+            , unH4 $ text ""
+            , unH5 $ text ""
+            , unP $ text "\n\n"
+            , unDiv $ text "\n"
+            , unLi $ text "\n"
+            , unUl $ text ""
+            , unOl $ text ""
+            ]
+
+    -- This basically constructs each tag into text
+    -- Using dup to duplicate tag into prefix and suffix, similar to pprHTML
+    let pprElement tag children pDocList =  
+         dup tag $ \prefixTag suffixTag ->     -- duplicate tag into prefix and suffix                   
+            pprTagPrefix prefixTag <>         -- markdown prefix
+            pDocList children <>              -- content
+            pprTagSuffix suffixTag             -- markdown suffix
+
+    -- Make text into plainText (used on all context inside of tags)
+    let pprText str = textAs str plainText 
+
+    -- This handles the AST structure of the document
+    -- rec is used to allow recursive definitions
+    -- This handles both Text and Element nodes
     rec pDoc <- share $ \doc ->
             case_ doc
-                [ unText $ \str -> textAs str plainText
-                , unElement $ \tag children ->
-                    case_ tag
-                        [ unBold $ text "**" <> pDocList children <> text "**"
-                        , unH1 $ pDocList children <> text "\n" <> text (replicate 20 '=')
-                        , unH2 $ pDocList children <> text "\n" <> text (replicate 20 '-')
-                        , unH3 $ text "### " <> pDocList children
-                        , unH4 $ text "#### " <> pDocList children
-                        , unH5 $ text "##### " <> pDocList children
-                        , unP $ pDocList children <> text "\n\n"
-                        , unDiv $ pDocList children <> text "\n"
-                        , unLi $ text "- " <> pDocList children <> text "\n"
-                        , unUl $ pDocList children
-                        , unOl $ pDocList children
-                        ]
-                , unSequence $ pDocList
+                [ unText $ pprText
+                , unElement $ \tag children -> pprElement tag children pDocList -- all tags are handled the same
                 ]
 
+        -- This is the non-html version of the document list
+        pDocList_NHT <- share $ \docs -> 
+            case_ docs 
+            [ unNil $ text ""
+            , unCons $ \d ds -> -- predefined datastruct used in flippre
+                case_ d  
+                [ unElement $ \tag children -> pprElement tag children pDocList <#> pDocList_NHT ds ] -- we always unelement after case d
+            ]
+
+        -- Full doc list, distinguishes Text vs Element
         pDocList <- share $ \docs ->
             case_ docs
                 [ unNil $ text ""
-                , unCons $ \head tail ->
-                    pDoc head <> pDocList tail
+                , unCons $ \d ds -> -- THIS IS NEW
+                    case_ d 
+                    [ unText $ \str -> pprText str <#> pDocList_NHT ds 
+                    , unElement $ \tag children -> 
+                        pprElement tag children pDocList <#> pDocList ds 
+                    ]
                 ]
 
     pure pDoc
 
+-- NEW HELPER FUNCTIONS
+-- Convert input using a bijection
+dupBij :: Eq a => PartialBij a (a, a) 
+dupBij = PartialBij "dup" (\a -> pure (a,a)) (\(a, b) -> if a == b then pure a else Nothing) 
+
+dup x h = convertInput dupBij x $ \tags -> unpair tags $ h 
+
 -- HTML pretty printer
 pprHTML :: (FliPprD arg exp) => FliPprM exp (A arg Doc -> E exp D)
 pprHTML = F.do
+    -- simple tag structure which is why we can use cases to simply return the tag text
     pprTag <- share $ \tag ->
-        case_ tag
+        case_ tag 
             [ unBold $ text "b"
             , unH1 $ text "h1"
             , unH2 $ text "h2"
@@ -100,21 +159,46 @@ pprHTML = F.do
             , unOl $ text "ol"
             ]
 
+    -- This basically constructs each tag into text
+    -- HOW DOES THIS WORK? IT SHOULD BE RECURSION OUTSIDE OF THE rec?
+    let pprElement tag children pDocList =  
+         dup tag $ \stag etag ->     -- duplicate tag into end- and start-tag                   
+            text "<" <#> pprTag stag <#> text ">" <#> -- <#> means append without whitespace(?)
+            pDocList children <#>                     -- we take the tag, the text which we get through pDocList children (of the specific tag)
+            text "</" <#> pprTag etag <#> text ">"    -- and the endtag. 
+
+    -- Make text into plainText (used on all context inside of tags)
+    let pprText str = textAs str plainText 
+
+    -- This handles the AST structure of the document
+    -- rec is used to allow recursive definitions
+    -- This handles both Text and Element nodes
     rec pDoc <- share $ \doc ->
             case_ doc
-                [ unText $ \str -> textAs str plainText
-                , unElement $ \tag children ->
-                    text "<" <> pprTag tag <> text ">" <>
-                    pDocList children <>
-                    text "</" <> pprTag tag <> text ">"
-                , unSequence $ pDocList
+                [ unText $ pprText
+                , unElement $ \tag children -> pprElement tag children pDocList -- all tags are handled the same
                 ]
 
+                -- NEW CODE 
+                -- This is the non-html version of the document list ?
+        pDocList_NHT <- share $ \docs -> 
+            case_ docs 
+            [ unNil $ text ""
+            , unCons $ \d ds -> -- predefined datastruct used in flippre
+                case_ d  
+                [ unElement $ \tag children -> pprElement tag children pDocList <#> pDocList ds ] -- we always unelement after case d
+            ]
+
+        -- Full doc list, distinguishes Text vs Element
         pDocList <- share $ \docs ->
             case_ docs
                 [ unNil $ text ""
-                , unCons $ \head tail ->
-                    pDoc head <> pDocList tail
+                , unCons $ \d ds -> -- THIS IS NEW
+                    case_ d 
+                    [ unText $ \str -> pprText str <#> pDocList_NHT ds 
+                    , unElement $ \tag children -> 
+                        pprElement tag children pDocList <#> pDocList ds 
+                    ]
                 ]
 
     pure pDoc
@@ -128,22 +212,28 @@ prettyMarkdown :: Doc -> PP.Doc ann
 prettyMarkdown = pprMode (flippr $ arg <$> pprMarkdown)
 
 -- Parser for HTML
--- USING THE PARSER SEEM TO RESULT IN INFINITE RECURSION ATM...
--- TODO: FIX THIS
+-- Fixed so infinite loops doesn't occur due to empty tags nor texts being split into all possible combinations
 parseHTML :: String -> [Doc]
-parseHTML s = case p (stripHtml s) of
-    Ok es -> es
-    Fail e -> error (show e)
+parseHTML s = -- ERROR HANDLING NEW!
+    trace (show $ G.pprAsFlat $ G.simplify g) $ 
+    trace "Another Trace" $
+    case p (stripHtml s) of
+        Ok es ->  trace "OK" $ es
+        Fail e -> trace "Fail" $ error (show e)
     where
         g :: (G.GrammarD Char g) => g (Err ann Doc)
         g = parsingMode (flippr $ arg <$> pprHTML)
-        p = E.parse g
+        p = E.parse g                                   -- This is where FR as a parser could be used instead of E.parse
 
 -- Parser for Markdown
+-- Should be fixed for debugging
 parseMarkdown :: String -> [Doc]
-parseMarkdown s = case p s of
-    Ok es -> es
-    Fail e -> error (show e)
+parseMarkdown s = 
+    trace (show $ G.pprAsFlat $ G.simplify g) $ 
+    trace "Another Trace" $
+    case p s of
+        Ok es ->  trace "OK" $ es
+        Fail e -> trace "Fail" $ error (show e)
     where
         g :: (G.GrammarD Char g) => g (Err ann Doc)
         g = parsingMode (flippr $ arg <$> pprMarkdown)
@@ -166,7 +256,7 @@ example3 :: Doc
 example3 = Element H1 [Text "Main Title"]
 
 example4 :: Doc
-example4 = Sequence
+example4 = Element Div 
     [ Element H1 [Text "Title"]
     , Element P [Text "This is a paragraph with ", Element Bold [Text "bold"], Text " text."]
     , Element H2 [Text "Subtitle"]
