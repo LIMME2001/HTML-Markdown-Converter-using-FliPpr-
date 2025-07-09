@@ -362,8 +362,8 @@ prettyHTML = pprMode (flippr $ arg <$> pprHTML)
 --   Includes debug traces for grammar and parse results.
 parseHTML :: String -> [Doc]
 parseHTML = \s ->
-    trace (show $ G.pprAsFlat $ G.simplify g) $ 
-    trace "Another Trace" $
+    --trace (show $ G.pprAsFlat $ G.simplify g) $ 
+    --trace "Another Trace" $
     case p (stripHtml s) of
         Ok es ->  trace "OK" $ es
         Fail e -> trace "Fail" $ error (show e)
@@ -376,8 +376,9 @@ parseHTML = \s ->
 --   Includes debug traces for grammar and parse results.
 markDownParser :: [Char] -> Err ann [Doc]
 markDownParser =
-    trace (show $ G.pprAsFlat $ G.simplify g) $ 
-    trace "Another Trace" p
+    --trace (show $ G.pprAsFlat $ G.simplify g) $ 
+    --trace "Another Trace" $ 
+    p
     where
         g :: (G.GrammarD Char g) => g (Err ann Doc)
         g = parsingMode (flippr $ arg <$> pprMarkdown)
@@ -387,8 +388,9 @@ markDownParser =
 --   Includes debug traces for grammar and parse results.
 mdParser :: [Char] -> Err ann [MarkdownDoc]
 mdParser =
-    trace (show $ G.pprAsFlat $ G.simplify g) $ 
-    trace "Another Trace" p
+    --trace (show $ G.pprAsFlat $ G.simplify g) $ 
+    --trace "Another Trace" $
+    p
     where
         g :: (G.GrammarD Char g) => g (Err ann MarkdownDoc)
         g = parsingMode (flippr $ arg <$> pprMarkdownDoc)
@@ -399,16 +401,16 @@ mdParser =
 parseMarkdown :: String -> [Doc]
 parseMarkdown s = 
     case markDownParser s of
-        Ok es ->  trace "OK" $ es
-        Fail e -> trace "Fail" $ error (show e)
+        Ok es -> es
+        Fail e -> error (show e)
 
 -- | Parse a Markdown string into a list of 'MarkdownDoc' ASTs.
 --   Handles error reporting and tracing.
 parseMarkdownDoc :: String -> [MarkdownDoc]
 parseMarkdownDoc s = 
     case mdParser s of
-        Ok es ->  trace "OK" $ es
-        Fail e -> trace "Fail" $ error (show e)
+        Ok es -> es
+        Fail e -> error (show e)
 
 -- | Remove surrounding <html>...</html> tags from a string, if present.
 stripHtml :: String -> String
@@ -418,16 +420,21 @@ stripHtml s =
 
 -- TEST EXAMPLES
 
+-- Passed
 example1 :: Doc
 example1 = Text "Hello World"
 
+-- Passed
 example2 :: Doc
 example2 = Element Bold [Text "Bold text"]
 
+-- Passed
 example3 :: Doc
 example3 = Element H1 [Text "Main Title"]
 
 -- Works for html but not markdown as the parser fails for the Ul Li structure
+-- FAIL (HTML: OK, MD: Multiple)
+-- MD Multiple results: 512255
 example4 :: Doc
 example4 = Element Div 
     [ Element H1 [Text "Title"]
@@ -439,39 +446,205 @@ example4 = Element Div
         ]
     ]
 
+-- FAIL (HTML: OK, MD: Multiple)
+-- MD Multiple results: 29
+example5 :: Doc
+example5 = Element P [Text "This is ", Element Bold [Text "very ", Element Bold [Text "bold"]], Text "!"]
+
+-- Passed
+example6 :: Doc
+example6 = Element Ol
+    [ Element Li [Text "First"]
+    , Element Li [Text "Second"]
+    , Element Li [Text "Third"]
+    ]
+
+-- FAIL (HTML: OK, MD: Multiple)
+-- MD Multiple results: 5
+-- cant identify where ul ends and ol starts
+example7 :: Doc
+example7 = Element Ul
+    [ Element Li [Text "Item 1"]
+    , Element Li [Text "Item 2", Element Ul [Element Li [Text "Subitem 2.1"], Element Li [Text "Subitem 2.2"]]]
+    , Element Li [Text "Item 3"]
+    ]
+
+-- FAIL (HTML: OK, MD: Multiple)
+-- MD Multiple results: 43
+example8 :: Doc
+example8 = Element P [Text "Numbers: 123, punctuation: !?., and more."]
+
+-- Passed
+example9 :: Doc
+example9 = Element Div []
+
+-- Failed
+-- This one gets completely stuck
+example10 :: Doc
+example10 = Element Div
+    [ Element P [Text "Level 1"
+        , Element Div [Element P [Text "Level 2"
+            , Element Div [Element P [Text "Level 3"]]
+        ]]
+        ]
+    ]
+
 -- Test round-trip conversion
 checkRoundTrip :: Doc -> String -> IO ()
 checkRoundTrip doc name = do
-    putStrLn $ "=== Testing " ++ name ++ " ==="
-
-    -- Convert to HTML
     let htmlStr = show (prettyHTML doc)
-    putStrLn $ "HTML: " ++ htmlStr
+    let htmlParsed = parseHTML htmlStr
+    let htmlOk = htmlParsed == [doc]
 
-    -- Parse HTML back 
-    case parseHTML htmlStr of
-        [parsedFromHTML] -> do
-            putStrLn $ "HTML round-trip: " ++ show (parsedFromHTML == doc)
+    let mdStr = show (prettyMarkdown doc)
+    let mdParsed = parseMarkdown mdStr
+    let mdOk = mdParsed == [doc]
 
-            -- Convert to Markdown
-            let mdStr = show (prettyMarkdown doc)
-            putStrLn $ "Markdown: " ++ mdStr
+    let htmlStatus = case htmlParsed of
+            [parsed] | parsed == doc -> "OK"
+            [parsed]                 -> "Mismatch"
+            []                       -> "ParseFail"
+            xs                       -> "Multiple"
+        mdStatus = case mdParsed of
+            [parsed] | parsed == doc -> "OK"
+            [parsed]                 -> "Mismatch"
+            []                       -> "ParseFail"
+            xs                       -> "Multiple"
 
-            -- Parse Markdown back
-            case parseMarkdown mdStr of
-                [parsedFromMD] -> do
-                    putStrLn $ "MD round-trip: " ++ show (parsedFromMD == doc)
-                [] -> putStrLn "MD parse failed"
-                results -> putStrLn $ "Multiple MD results: " ++ show (length results)
+    let pass = htmlStatus == "OK" && mdStatus == "OK"
+    putStrLn $ name ++ ": " ++ (if pass then "PASS" else "FAIL")
+        ++ " (HTML: " ++ htmlStatus ++ ", MD: " ++ mdStatus ++ ")"
 
-        [] -> putStrLn "HTML parse failed"
-        results -> putStrLn $ "Multiple HTML results: " ++ show (length results)
+    -- Print only the number of results if there are multiple
+    case htmlParsed of
+        xs@(_:_:_) -> putStrLn $ "  HTML Multiple results: " ++ show (length xs)
+        _ -> pure ()
+    case mdParsed of
+        --xs@(_:_:_) -> do
+        --    putStrLn $ "  MD Multiple results: " ++ show (length xs)
+        --    mapM_ (\x -> putStrLn (show x ++ "\n")) xs
+        xs@(_:_:_) -> putStrLn $ "  MD Multiple results: " ++ show (length xs)
+        _ -> pure ()
+    
 
-    putStrLn ""
+-- TESTS FOR MarkdownDoc
+
+-- Passed
+exampleMD1 :: MarkdownDoc
+exampleMD1 = MarkdownDoc [Paragraph [Str "Hello from MarkdownDoc!"]]
+
+-- Passed
+exampleMD2 :: MarkdownDoc
+exampleMD2 = MarkdownDoc [Paragraph [Str "This is ", Strong [Str "bold"], Str " text."]]
+
+-- Passed
+exampleMD3 :: MarkdownDoc
+exampleMD3 = MarkdownDoc [Header 1 [Str "Main Title"]]
+
+-- Passed
+exampleMD4 :: MarkdownDoc
+exampleMD4 = MarkdownDoc
+    [ Header 2 [Str "Subtitle"]
+    , Paragraph [Str "Some content under a subtitle."]
+    ]
+
+-- Passed
+exampleMD5 :: MarkdownDoc
+exampleMD5 = MarkdownDoc
+    [ OrderedList
+        [ [Paragraph [Str "First item"]]
+        , [Paragraph [Str "Second item"]]
+        , [Paragraph [Str "Third item"]]
+        ]
+    ]
+
+-- Passed
+exampleMD6 :: MarkdownDoc
+exampleMD6 = MarkdownDoc
+    [ UnorderedList
+        [ [Paragraph [Str "Item 1"]]
+        , [Paragraph [Str "Item 2 ", Strong [Str "with bold"]]]
+        , [Paragraph [Str "Item 3"]]
+        ]
+    ]
+
+-- Failed
+-- 2 results
+-- MarkdownDoc [OrderedList [[Paragraph [Str "Outer 1"]],[Paragraph [Str "Outer 2"],UnorderedList [[Paragraph [Str "Inner 1"]],[Paragraph [Str "Inner 2"]]]]]],
+-- MarkdownDoc [OrderedList [[Paragraph [Str "Outer 1"]],[Paragraph [Str "Outer 2"]]],UnorderedList [[Paragraph [Str "Inner 1"]],[Paragraph [Str "Inner 2"]]]]
+exampleMD7 :: MarkdownDoc
+exampleMD7 = MarkdownDoc
+    [ OrderedList
+        [ [Paragraph [Str "Outer 1"]]
+        , [Paragraph [Str "Outer 2"]
+          , UnorderedList
+                [ [Paragraph [Str "Inner 1"]]
+                , [Paragraph [Str "Inner 2"]]
+                ]
+          ]
+        ]
+    ]
+
+-- Passed
+exampleMD8 :: MarkdownDoc
+exampleMD8 = MarkdownDoc
+    [ Paragraph [Str "First paragraph."]
+    , Paragraph [Str "Second paragraph with ", Strong [Str "bold"], Str "."]
+    ]
+
+-- Passed
+exampleMD9 :: MarkdownDoc
+exampleMD9 = MarkdownDoc
+    [ Header 3 [Str "List Section"]
+    , Paragraph [Str "Below is a list:"]
+    , UnorderedList
+        [ [Paragraph [Str "Apple"]]
+        , [Paragraph [Str "Banana"]]
+        , [Paragraph [Str "Cherry"]]
+        ]
+    ]
+
+-- Passed
+exampleMD10 :: MarkdownDoc
+exampleMD10 = MarkdownDoc []
+
+checkRoundTripMD :: MarkdownDoc -> String -> IO ()
+checkRoundTripMD mdDoc name = do
+    let mdStr = show (prettyMD mdDoc)
+    let mdParsed = parseMarkdownDoc mdStr
+    let status = case mdParsed of
+            [parsed] | parsed == mdDoc -> "OK"
+            [parsed]                   -> "Mismatch"
+            []                         -> "ParseFail"
+            xs                         -> "Multiple"
+    let pass = status == "OK"
+    putStrLn $ name ++ ": " ++ (if pass then "PASS" else "FAIL") ++ " (MD: " ++ status ++ ")"
+    case mdParsed of
+        xs@(_:_:_) -> putStrLn $ "  MD Multiple results: " ++ show xs ++ show (length xs)
+        _ -> pure ()
 
 main :: IO ()
 main = do
-    checkRoundTrip example1 "Simple text"
-    checkRoundTrip example2 "Bold text"
-    checkRoundTrip example3 "H1 header"
-    checkRoundTrip example4 "Complex document"
+--    checkRoundTrip example1 "Simple text"
+--    checkRoundTrip example2 "Bold text"
+--    checkRoundTrip example3 "H1 header"
+--    checkRoundTrip example4 "Complex document"
+--    checkRoundTrip example5 "Nested bold"
+--    checkRoundTrip example6 "Ordered list"
+--    checkRoundTrip example7 "Unordered list with nesting"
+--    checkRoundTrip example8 "Paragraph with punctuation and numbers"
+--    checkRoundTrip example9 "Empty document"
+    checkRoundTrip example10 "Deeply nested structure"
+
+mdtest :: IO ()
+mdtest = do
+    --checkRoundTripMD exampleMD1 "Simple MarkdownDoc"
+    --checkRoundTripMD exampleMD2 "Paragraph with bold"
+    --checkRoundTripMD exampleMD3 "Header 1"
+    --checkRoundTripMD exampleMD4 "Header 2 and paragraph"
+    --checkRoundTripMD exampleMD5 "Ordered list"
+    --checkRoundTripMD exampleMD6 "Unordered list with bold"
+    --checkRoundTripMD exampleMD7 "Nested lists"
+    --checkRoundTripMD exampleMD8 "Multiple paragraphs"
+    --checkRoundTripMD exampleMD9 "Header, paragraph, and list"
+    --checkRoundTripMD exampleMD10 "Empty document"
