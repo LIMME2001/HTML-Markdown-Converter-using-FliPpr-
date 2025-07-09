@@ -203,11 +203,7 @@ pprMarkdown = F.do
 
     -- Pretty-print an element node by dispatching to pprTag.
     -- This is where you could add more logic for tag handling if needed.
-    let pprElement tag children pDocList pLiList =  
-        --  dup tag $ \prefixTag suffixTag ->     -- duplicate tag into prefix and suffix                   
-        --     pprTagPrefix prefixTag <>         -- markdown prefix
-        --     pDocList children <>              -- content
-        --     pprTagSuffix suffixTag             -- markdown suffix
+    let pprElement tag children pDocList pLiList =
             pprTag pDocList pLiList children tag
         
     -- Pretty-print a list item (li) node, with correct prefix for UL/OL.
