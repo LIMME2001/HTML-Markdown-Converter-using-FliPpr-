@@ -343,6 +343,58 @@ pprHTML = F.do
                 ]
     pure pDoc
 
+
+-- CONVERSIONS BETWEEN MarkdownDoc AND Doc
+
+-- Convert MarkdownDoc to Doc
+-- THIS NEEDS A MAJOR LOOKOVER
+markdownDocToDoc :: MarkdownDoc -> Doc
+markdownDocToDoc (MarkdownDoc blocks) = Element Div (map blockToDoc blocks)
+    where
+        blockToDoc :: MarkdownBlock -> Doc
+        blockToDoc (Paragraph inlines) = Element P (map inlineToDoc inlines)
+        blockToDoc (Header n inlines) =
+            let tag = case n of
+                  1 -> H1; 2 -> H2; 3 -> H3; 4 -> H4; 5 -> H5; _ -> P
+            in Element tag (map inlineToDoc inlines)
+        blockToDoc (OrderedList items) =
+            Element Ol (map (\item -> Element Li (map blockToDoc item)) items)
+        blockToDoc (UnorderedList items) =
+            Element Ul (map (\item -> Element Li (map blockToDoc item)) items)
+
+        inlineToDoc :: Inline -> Doc
+        inlineToDoc (Str s) = Text s
+        inlineToDoc (Strong xs) = Element Bold (map inlineToDoc xs)
+
+-- Convert Doc to MarkdownDoc
+docToMarkdownDoc :: Doc -> MarkdownDoc
+docToMarkdownDoc (Element Div blocks) = MarkdownDoc (concatMap docToBlocks blocks)
+docToMarkdownDoc d = MarkdownDoc (docToBlocks d)
+
+docToBlocks :: Doc -> [MarkdownBlock]
+docToBlocks (Element P inlines) = [Paragraph (concatMap docToInlines inlines)]
+docToBlocks (Element tag inlines) = case tag of
+    H1 -> [Header 1 (concatMap docToInlines inlines)]
+    H2 -> [Header 2 (concatMap docToInlines inlines)]
+    H3 -> [Header 3 (concatMap docToInlines inlines)]
+    H4 -> [Header 4 (concatMap docToInlines inlines)]
+    H5 -> [Header 5 (concatMap docToInlines inlines)]
+    Ol -> [OrderedList (map docToBlocksList inlines)]
+    Ul -> [UnorderedList (map docToBlocksList inlines)]
+    _  -> concatMap docToBlocks inlines
+docToBlocks (Text _) = []  -- Text outside block is ignored
+
+docToBlocksList :: Doc -> [MarkdownBlock]
+docToBlocksList (Element Li xs) = concatMap docToBlocks xs
+docToBlocksList d = docToBlocks d
+
+docToInlines :: Doc -> [Inline]
+docToInlines (Text s) = [Str s]
+docToInlines (Element Bold xs) = [Strong (concatMap docToInlines xs)]
+docToInlines (Element _ xs) = concatMap docToInlines xs
+
+
+
 -- | Convert a 'MarkdownDoc' (Markdown AST) to a pretty-printed Markdown document.
 prettyMD :: MarkdownDoc -> PP.Doc ann
 prettyMD = pprMode (flippr $ arg <$> pprMarkdownDoc)
@@ -638,7 +690,7 @@ main = do
 
 mdtest :: IO ()
 mdtest = do
-    --checkRoundTripMD exampleMD1 "Simple MarkdownDoc"
+    checkRoundTripMD exampleMD1 "Simple MarkdownDoc"
     --checkRoundTripMD exampleMD2 "Paragraph with bold"
     --checkRoundTripMD exampleMD3 "Header 1"
     --checkRoundTripMD exampleMD4 "Header 2 and paragraph"
@@ -648,3 +700,121 @@ mdtest = do
     --checkRoundTripMD exampleMD8 "Multiple paragraphs"
     --checkRoundTripMD exampleMD9 "Header, paragraph, and list"
     --checkRoundTripMD exampleMD10 "Empty document"
+
+{-
+We want the following pipeline: 
+Markdown text -> MarkdownDoc
+MarkdownDoc -> Markdown text
+MarkdownDoc -> Doc           This and the following one are missing
+Doc -> MarkdownDoc
+Doc -> HTML text
+HTML text -> Doc
+Doc -> Markdown text
+Markdown text -> Doc
+
+We probably need:
+markdownDocToDoc :: MarkdownDoc -> Doc
+docToMarkdownDoc :: Doc -> MarkdownDoc
+-}
+
+pipelineTest :: String -> MarkdownDoc -> IO ()
+pipelineTest name mdDoc = do
+    putStrLn $ "=== Pipeline test: " ++ name ++ " ==="
+
+    -- 1. MarkdownDoc -> Markdown text
+    let mdStr = show (prettyMD mdDoc)
+
+    -- 2. Markdown text -> MarkdownDoc
+    let mdParsed = parseMarkdownDoc mdStr
+    let mdDoc' = case mdParsed of
+            [d] -> d
+            _   -> MarkdownDoc []
+
+    -- 3. MarkdownDoc -> Doc
+    let doc = markdownDocToDoc mdDoc
+
+    -- 4. Doc -> HTML text
+    let htmlStr = show (prettyHTML doc)
+
+    -- 5. HTML text -> Doc
+    let docParsed = parseHTML htmlStr
+    let doc' = case docParsed of
+            [d] -> d
+            _   -> Element Div []
+
+    -- 6. Doc -> Markdown text
+    let mdStrFromDoc = show (prettyMarkdown doc)
+
+    -- 7. Markdown text -> Doc
+    let docParsedFromMD = parseMarkdown mdStrFromDoc
+    let docFromMD = case docParsedFromMD of
+            [d] -> d
+            _   -> Element Div []
+
+    -- 8. Doc -> MarkdownDoc
+    let mdDocFromDoc = docToMarkdownDoc doc
+
+    -- 9. Doc (from HTML) -> MarkdownDoc
+    let mdDocFromHtml = docToMarkdownDoc doc'
+
+    -- Print results
+    putStrLn $ "MD round-trip: " ++ show (mdDoc == mdDoc')
+    putStrLn $ "Doc round-trip (HTML): " ++ show (doc == doc')
+    putStrLn $ "Doc round-trip (MD): " ++ show (doc == docFromMD)
+    putStrLn $ "MD->Doc->MD: " ++ show (mdDoc == mdDocFromDoc)
+    putStrLn $ "MD->Doc->HTML->Doc->MD: " ++ show (mdDoc == mdDocFromHtml)
+    putStrLn ""
+
+-- Example pipeline test runner
+pipelineTests :: IO ()
+pipelineTests = do
+    pipelineTest "Simple MarkdownDoc" exampleMD1
+    pipelineTest "Paragraph with bold" exampleMD2
+    pipelineTest "Header 1" exampleMD3
+    pipelineTest "Header 2 and paragraph" exampleMD4
+    pipelineTest "Ordered list" exampleMD5
+    pipelineTest "Unordered list with bold" exampleMD6
+    pipelineTest "Nested lists" exampleMD7
+    pipelineTest "Multiple paragraphs" exampleMD8
+    pipelineTest "Header, paragraph, and list" exampleMD9
+    pipelineTest "Empty document" exampleMD10
+
+{-
+=== Pipeline test: Simple MarkdownDoc ===
+MD round-trip: True
+Doc round-trip (HTML): OK
+True
+Doc round-trip (MD): False
+MD->Doc->MD: True
+MD->Doc->HTML->Doc->MD: True
+
+=== Pipeline test: Paragraph with bold ===
+MD round-trip: True
+Doc round-trip (HTML): OK
+True
+Doc round-trip (MD): False
+MD->Doc->MD: True
+MD->Doc->HTML->Doc->MD: True
+
+=== Pipeline test: Header 1 ===
+MD round-trip: True
+Doc round-trip (HTML): OK
+True
+Doc round-trip (MD): False
+MD->Doc->MD: True
+MD->Doc->HTML->Doc->MD: True
+
+=== Pipeline test: Header 2 and paragraph ===
+MD round-trip: True
+Doc round-trip (HTML): OK
+True
+Doc round-trip (MD): False
+MD->Doc->MD: True
+MD->Doc->HTML->Doc->MD: True
+
+=== Pipeline test: Ordered list ===
+MD round-trip: True
+Doc round-trip (HTML): OK
+True
+Doc round-trip (MD): *** Exception: stack overflow
+-}
