@@ -1,9 +1,3 @@
-{- 
-Note:
-    - `unElement` and `unText` are generated accessors from Template Haskell splices `mkUn`.
-    - `unCons` typically destructures lists or trees; `unText` extracts text from a single node.
--}
-
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -31,6 +25,8 @@ import qualified Prettyprinter as PP (Doc)
 import Data.List (isPrefixOf, isSuffixOf)
 import qualified Text.FliPpr.Grammar as G (pprAsFlat) -- New import check exactly what this does
 import Control.Applicative (Alternative(..))
+import Data.Word (Word8)
+import Control.Monad (unless)
 
 -- AST DATATYPES FOR MARKDOWN
 
@@ -57,7 +53,7 @@ $(mkUn ''MarkdownDoc)
 $(mkUn ''MarkdownBlock)
 $(mkUn ''Inline)
 
--- AST DATATYPES FOR HTML-LIKE STRUCTURE (used for both HTML and Markdown output)
+-- AST DATATYPES FOR HTML-LIKE STRUCTURE FOR HTML
 
 -- | Abstract syntax tree (AST) for a document with HTML-like structure.
 data Doc
@@ -87,6 +83,26 @@ plainText = AM.plus (AM.unions [
     AM.singleton ';'
     ])
 
+
+-- UNSURE ABOUT THIS BUT ITS CONNECTED TO THE MARKDOWN ONE
+data HaveSeenList = HaveSeenOther | HaveSeenOL | HaveSeenUL deriving (Show, Ord, Eq)
+
+instance Enum HaveSeenList where 
+    toEnum 0 = HaveSeenOther
+    toEnum 1 = HaveSeenOL
+    toEnum 2 = HaveSeenUL 
+    toEnum _ = error "toEnum: out of range"
+    
+    fromEnum HaveSeenOther = 0 
+    fromEnum HaveSeenOL = 1 
+    fromEnum HaveSeenUL = 2 
+
+instance Bounded HaveSeenList where 
+    minBound = HaveSeenOther 
+    maxBound = HaveSeenUL 
+
+deriving via (G.FromBounded HaveSeenList -> a) instance Arg f a => Arg f (HaveSeenList -> a)
+
 -- PRETTY-PRINTERS
 
 -- | Pretty-printer for the MarkdownDoc AST.
@@ -98,16 +114,16 @@ pprMarkdownDoc = F.do
     let pprText str = textAs str plainText 
 
     -- Pretty-print headers, supporting both underline and hash styles for levels 1 and 2.
-    let pHeaderF level pInlines = 
+    let pHeaderF level pp = 
             case_ level 
-                [ is 1 $ pInlines <#> text "\n" <#> text (replicate 20 '=')
-                , is 1 $ text "# " <#> pInlines
-                , is 2 $ pInlines <#> text "\n" <#> text (replicate 20 '-')
-                , is 2 $ text "## " <#> pInlines
-                , is 3 $ text "### " <#> pInlines
-                , is 4 $ text "#### " <#> pInlines
-                , is 5 $ text "##### " <#> pInlines
-                , is 6 $ text "###### " <#> pInlines
+                [ is 1 $ pp <#> text "\n" <#> text (replicate 20 '=')
+                , is 1 $ text "# " <#> pp
+                , is 2 $ pp <#> text "\n" <#> text (replicate 20 '-')
+                , is 2 $ text "## " <#> pp
+                , is 3 $ text "### " <#> pp
+                , is 4 $ text "#### " <#> pp
+                , is 5 $ text "##### " <#> pp
+                , is 6 $ text "###### " <#> pp
                 ]
 
     -- Recognize a single space or tab.
@@ -119,53 +135,83 @@ pprMarkdownDoc = F.do
         manyEmptyLines <- share $ text "" <? (emptyLine <#> manyEmptyLines)
         someEmptyLines <- share $ emptyLine <#> manyEmptyLines
 
+    let indent off = foldr (<#>) (text "") $ replicate (fromIntegral off) (text " ") 
+    let indentUnless off b d = if not b then indent off <#> d else d  
+    
+    let cutOff :: Word8 -> E exp D -> E exp D 
+        cutOff off d = if off > 16 then abort else d  
+
+    let withIncIndent f = f 0 <? f 1 <? f 2  
     -- Top-level pretty-printer for a MarkdownDoc.
     rec pTop <- share $ \d -> 
             case_ d
-                [ unMarkdownDoc $ \blocks -> pBlocks True blocks
+                [ unMarkdownDoc $ \blocks -> manyEmptyLines <#> pBlocks 0 False True HaveSeenOther blocks <#> manyEmptyLines
                 ]
 
         -- Pretty-print a list of blocks, allowing for optional emptiness.
-        pBlocks <- share $ \canBeEmpty bs -> 
+        pBlocks <- share $ \off noIndent canBeEmpty seen bs -> cutOff off $ 
             case_ bs 
             [ unNil $ if canBeEmpty then text "" else abort
-            , unCons $ \b bs' -> pBlocks' b bs' ] 
+            , unCons $ \b bs' -> pBlocks' off noIndent seen b bs' ] 
 
         -- Pretty-print a block followed by more blocks, handling empty lines between.
-        pBlocks' <- share $ \b bs -> 
-            case_ bs 
-            [ unNil $ pBlock b <#> manyEmptyLines
+        pBlocks' <- share $ \off noIndent seen b bs -> cutOff off $ 
+            let pBlock rest = case_ b 
+                    [ unParagraph $ \inlines -> 
+                        (indentUnless off noIndent $ pInlines True False inlines) <#> rest HaveSeenOther
+                    , unHeader $ \level inlines -> 
+                        (indentUnless off noIndent $ pHeaderF level (pInlines True False inlines)) <#> rest HaveSeenOther
+                    , unOrderedList $ \items -> 
+                        case seen of 
+                            HaveSeenOL -> abort 
+                            _          -> pList off noIndent False True items <#> rest HaveSeenOL
+                    , unUnorderedList $ \items -> 
+                        case seen of 
+                            HaveSeenUL -> abort 
+                            _ -> pList off noIndent False False items <#> rest HaveSeenUL 
+                    ]
+            in case_ bs 
+            [ unNil $ pBlock $ \_ -> text "" 
             , unCons $ \b' bs' -> 
-                pBlock b <#> someEmptyLines <#> pBlocks' b' bs' ]
-
-        -- Pretty-print a single block (paragraph, header, or list).
-        pBlock <- share $ \b ->
-            case_ b
-                [ unParagraph $ \inlines -> pInlines True False inlines
-                , unHeader $ \level inlines -> 
-                    pHeaderF level (pInlines True False inlines)
-                , unOrderedList $ \items -> 
-                    pList False True items 
-                , unUnorderedList $ \items -> 
-                    pList False False items 
+                let rest s = someEmptyLines <#> pBlocks' off False s b' bs' 
+                in pBlock rest 
+  
                 ]
+
+        -- -- Pretty-print a single block (paragraph, header, or list).
+        -- pBlock <- share $ \off noIndent b -> cutOff off $
+        --     case_ b
+        --         [ unParagraph $ \inlines -> indentUnless off noIndent $ pInlines True False inlines
+        --         , unHeader $ \level inlines -> 
+        --             indentUnless off noIndent $ pHeaderF level (pInlines True False inlines)
+        --         , unOrderedList $ \items -> 
+        --             pList off noIndent False True items 
+        --         , unUnorderedList $ \items -> 
+        --             pList off noIndent False False items 
+        --         ]
 
         -- Pretty-print a single list item, with correct prefix for ordered/unordered.
-        pListItem <- share $ \isOL bs ->
-            let d = if isOL then text "#. " else text "- "
-            in d <#> pBlocks False bs 
+        pListItem <- share $ \(off :: Word8) (noIndent :: Bool) isOL bs -> cutOff off $ 
+            let dstr = if isOL then "#. " else "- " 
+                d = text dstr 
+            in withIncIndent $ \inc -> 
+                indentUnless (off + inc) noIndent $ 
+                 d <#> pBlocks (off + inc + fromIntegral (length dstr)) True False HaveSeenOther bs 
 
         -- Pretty-print a list of list items.
-        pList <- pure $ \canBeEmpty isOL items ->
+        pList <- pure $ \off noIndent canBeEmpty isOL items -> cutOff off $
             case_ items
                 [ unNil $ if canBeEmpty then text "" else abort  
-                , unCons $ \item items' -> 
-                    pListItem isOL item <#> pList True isOL items'
+                , unCons $ \item items' -> pList' off noIndent isOL item items'
                 ]
         
+        pList' <- share $ \(off :: Word8) (noIndent :: Bool) isOL b bs -> cutOff off $ 
+            case_ bs 
+            [ unNil  $ pListItem off noIndent isOL b 
+            , unCons $ \b' bs' -> pListItem off noIndent isOL b <#> someEmptyLines <#> pList' off False isOL b' bs' ]
         -- Pretty-print inline elements (text and strong/bold).
-        pInlines <- share $ \canHaveStr canProduceEmpty es ->
-            case_ es
+        pInlines <- share $ \(canHaveStr :: Bool) canProduceEmpty es ->  
+            case_ es 
                 [ unNil $ if canProduceEmpty then text "" else abort 
                 , unCons $ \e es' -> 
                     case_ e
@@ -174,6 +220,9 @@ pprMarkdownDoc = F.do
                         ]
                 ]
     pure pTop
+
+
+-- OLD CODE NOT USED ANYMORE
 
 -- | Pretty-printer for the HTML-like Doc AST, producing Markdown source.
 --   Converts a 'Doc' (HTML-like AST) into a pretty-printing expression for Markdown.
@@ -270,6 +319,13 @@ pprMarkdown = F.do
                 ]       
     pure pDoc
 
+
+
+
+
+
+
+
 -- | Helper bijection for duplicating a value into a pair (a, a).
 --   Used to generate both start and end tags for HTML elements.
 dupBij :: Eq a => PartialBij a (a, a) 
@@ -345,54 +401,112 @@ pprHTML = F.do
 
 
 -- CONVERSIONS BETWEEN MarkdownDoc AND Doc
+-- | Pretty-printer for MarkdownDoc AST, producing HTML-like output.
+--   Converts a MarkdownDoc into HTML-like textual representation.
+--   This creates a bidirectional transformation between MarkdownDoc and HTML text.
+pprMarkdownToHTML :: forall arg exp. (FliPprD arg exp) => FliPprM exp (A arg MarkdownDoc -> E exp D)
+pprMarkdownToHTML = F.do
+    -- Helper to convert header level to HTML tag
+    let headerToTag level = 
+            case_ level
+                [ is 1 $ text "h1"
+                , is 2 $ text "h2" 
+                , is 3 $ text "h3"
+                , is 4 $ text "h4"
+                , is 5 $ text "h5"
+                , is 6 $ text "h6"
+                ]
+    
+    -- Helper to create HTML tag with content
+    let htmlTag tagName content = 
+            text "<" <#> tagName <#> text ">" <#> content <#> text "</" <#> tagName <#> text ">"
+    
+    -- Pretty-print plain text using the DFA for allowed characters
+    let pprText str = textAs str plainText
+    
+    -- Recursive combinators
+    rec
+        -- Top-level pretty-printer for MarkdownDoc
+        pTop <- share $ \mdDoc ->
+            case_ mdDoc
+                [ unMarkdownDoc $ \blocks -> 
+                    htmlTag (text "div") (pBlocks blocks)
+                ]
+        
+        -- Pretty-print a list of blocks
+        pBlocks <- share $ \blocks ->
+            case_ blocks
+                [ unNil $ text ""
+                , unCons $ \block rest -> 
+                    pBlock block <#> pBlocks rest
+                ]
+        
+        -- Pretty-print a single block
+        pBlock <- share $ \block ->
+            case_ block
+                [ unParagraph $ \inlines -> 
+                    htmlTag (text "p") (pInlines inlines)
+                , unHeader $ \level inlines -> 
+                    htmlTag (headerToTag level) (pInlines inlines)
+                , unOrderedList $ \items -> 
+                    htmlTag (text "ul") (pListItems items)
+                , unUnorderedList $ \items -> 
+                    htmlTag (text "ol") (pListItems items)
+                ]
+        
+        -- Pretty-print list items
+        pListItems <- share $ \items ->
+            case_ items
+                [ unNil $ text ""
+                , unCons $ \item rest ->
+                    pListItem item <#> pListItems rest
+                ]
+        
+        -- Pretty-print a single list item
+        pListItem <- share $ \blocks ->
+            htmlTag (text "li") (pBlocks blocks)
+        
+        -- Pretty-print inline elements
+        pInlines <- share $ \inlines ->
+            case_ inlines
+                [ unNil $ text ""
+                , unCons $ \inline rest ->
+                    pInline inline <#> pInlines rest
+                ]
+        
+        -- Pretty-print a single inline element
+        pInline <- share $ \inline ->
+            case_ inline
+                [ unStr $ pprText
+                , unStrong $ \inlines -> 
+                    htmlTag (text "b") (pInlines inlines)
+                ]
+    
+    pure pTop
 
--- Convert MarkdownDoc to Doc
--- THIS NEEDS A MAJOR LOOKOVER
-markdownDocToDoc :: MarkdownDoc -> Doc
-markdownDocToDoc (MarkdownDoc blocks) = Element Div (map blockToDoc blocks)
+-- | Convert a MarkdownDoc to HTML string using the FliPpr converter
+markdownDocToHTML :: MarkdownDoc -> PP.Doc ann
+markdownDocToHTML = pprMode (flippr $ arg <$> pprMarkdownToHTML)
+
+-- | Parse HTML string back to MarkdownDoc using the FliPpr converter
+parseHTMLToMarkdownDoc :: String -> [MarkdownDoc]
+parseHTMLToMarkdownDoc s = 
+    case p s of
+        Ok es -> es
+        Fail e -> error (show e)
     where
-        blockToDoc :: MarkdownBlock -> Doc
-        blockToDoc (Paragraph inlines) = Element P (map inlineToDoc inlines)
-        blockToDoc (Header n inlines) =
-            let tag = case n of
-                  1 -> H1; 2 -> H2; 3 -> H3; 4 -> H4; 5 -> H5; _ -> P
-            in Element tag (map inlineToDoc inlines)
-        blockToDoc (OrderedList items) =
-            Element Ol (map (\item -> Element Li (map blockToDoc item)) items)
-        blockToDoc (UnorderedList items) =
-            Element Ul (map (\item -> Element Li (map blockToDoc item)) items)
+        g :: (G.GrammarD Char g) => g (Err ann MarkdownDoc)
+        g = parsingMode (flippr $ arg <$> pprMarkdownToHTML)
+        p = E.parse g
 
-        inlineToDoc :: Inline -> Doc
-        inlineToDoc (Str s) = Text s
-        inlineToDoc (Strong xs) = Element Bold (map inlineToDoc xs)
 
--- Convert Doc to MarkdownDoc
-docToMarkdownDoc :: Doc -> MarkdownDoc
-docToMarkdownDoc (Element Div blocks) = MarkdownDoc (concatMap docToBlocks blocks)
-docToMarkdownDoc d = MarkdownDoc (docToBlocks d)
 
-docToBlocks :: Doc -> [MarkdownBlock]
-docToBlocks (Element P inlines) = [Paragraph (concatMap docToInlines inlines)]
-docToBlocks (Element tag inlines) = case tag of
-    H1 -> [Header 1 (concatMap docToInlines inlines)]
-    H2 -> [Header 2 (concatMap docToInlines inlines)]
-    H3 -> [Header 3 (concatMap docToInlines inlines)]
-    H4 -> [Header 4 (concatMap docToInlines inlines)]
-    H5 -> [Header 5 (concatMap docToInlines inlines)]
-    Ol -> [OrderedList (map docToBlocksList inlines)]
-    Ul -> [UnorderedList (map docToBlocksList inlines)]
-    _  -> concatMap docToBlocks inlines
-docToBlocks (Text _) = []  -- Text outside block is ignored
 
-docToBlocksList :: Doc -> [MarkdownBlock]
-docToBlocksList (Element Li xs) = concatMap docToBlocks xs
-docToBlocksList d = docToBlocks d
 
-docToInlines :: Doc -> [Inline]
-docToInlines (Text s) = [Str s]
-docToInlines (Element Bold xs) = [Strong (concatMap docToInlines xs)]
-docToInlines (Element _ xs) = concatMap docToInlines xs
 
+
+
+        
 
 
 -- | Convert a 'MarkdownDoc' (Markdown AST) to a pretty-printed Markdown document.
@@ -470,7 +584,14 @@ stripHtml s =
     let s' = if "<html>" `isPrefixOf` s then drop 6 s else s
     in if "</html>" `isSuffixOf` s' then take (length s' - 7) s' else s'
 
--- TEST EXAMPLES
+
+
+
+
+
+
+
+-- TEST EXAMPLES HTML
 
 -- Passed
 example1 :: Doc
@@ -484,9 +605,7 @@ example2 = Element Bold [Text "Bold text"]
 example3 :: Doc
 example3 = Element H1 [Text "Main Title"]
 
--- Works for html but not markdown as the parser fails for the Ul Li structure
--- FAIL (HTML: OK, MD: Multiple)
--- MD Multiple results: 512255
+-- Passed
 example4 :: Doc
 example4 = Element Div 
     [ Element H1 [Text "Title"]
@@ -498,8 +617,7 @@ example4 = Element Div
         ]
     ]
 
--- FAIL (HTML: OK, MD: Multiple)
--- MD Multiple results: 29
+-- Passed
 example5 :: Doc
 example5 = Element P [Text "This is ", Element Bold [Text "very ", Element Bold [Text "bold"]], Text "!"]
 
@@ -511,9 +629,7 @@ example6 = Element Ol
     , Element Li [Text "Third"]
     ]
 
--- FAIL (HTML: OK, MD: Multiple)
--- MD Multiple results: 5
--- cant identify where ul ends and ol starts
+-- Passed
 example7 :: Doc
 example7 = Element Ul
     [ Element Li [Text "Item 1"]
@@ -521,8 +637,7 @@ example7 = Element Ul
     , Element Li [Text "Item 3"]
     ]
 
--- FAIL (HTML: OK, MD: Multiple)
--- MD Multiple results: 43
+-- Passed
 example8 :: Doc
 example8 = Element P [Text "Numbers: 123, punctuation: !?., and more."]
 
@@ -530,8 +645,7 @@ example8 = Element P [Text "Numbers: 123, punctuation: !?., and more."]
 example9 :: Doc
 example9 = Element Div []
 
--- Failed
--- This one gets completely stuck
+-- Passed
 example10 :: Doc
 example10 = Element Div
     [ Element P [Text "Level 1"
@@ -541,43 +655,40 @@ example10 = Element Div
         ]
     ]
 
--- Test round-trip conversion
-checkRoundTrip :: Doc -> String -> IO ()
-checkRoundTrip doc name = do
+checkRoundTripHTML :: Doc -> String -> IO ()
+checkRoundTripHTML doc name = do
     let htmlStr = show (prettyHTML doc)
     let htmlParsed = parseHTML htmlStr
-    let htmlOk = htmlParsed == [doc]
-
-    let mdStr = show (prettyMarkdown doc)
-    let mdParsed = parseMarkdown mdStr
-    let mdOk = mdParsed == [doc]
-
-    let htmlStatus = case htmlParsed of
+    let status = case htmlParsed of
             [parsed] | parsed == doc -> "OK"
             [parsed]                 -> "Mismatch"
             []                       -> "ParseFail"
             xs                       -> "Multiple"
-        mdStatus = case mdParsed of
-            [parsed] | parsed == doc -> "OK"
-            [parsed]                 -> "Mismatch"
-            []                       -> "ParseFail"
-            xs                       -> "Multiple"
-
-    let pass = htmlStatus == "OK" && mdStatus == "OK"
-    putStrLn $ name ++ ": " ++ (if pass then "PASS" else "FAIL")
-        ++ " (HTML: " ++ htmlStatus ++ ", MD: " ++ mdStatus ++ ")"
-
-    -- Print only the number of results if there are multiple
+    let pass = status == "OK"
+    putStrLn $ name ++ ": " ++ (if pass then "PASS" else "FAIL") ++ " (HTML: " ++ status ++ ")"
     case htmlParsed of
         xs@(_:_:_) -> putStrLn $ "  HTML Multiple results: " ++ show (length xs)
         _ -> pure ()
-    case mdParsed of
-        --xs@(_:_:_) -> do
-        --    putStrLn $ "  MD Multiple results: " ++ show (length xs)
-        --    mapM_ (\x -> putStrLn (show x ++ "\n")) xs
-        xs@(_:_:_) -> putStrLn $ "  MD Multiple results: " ++ show (length xs)
-        _ -> pure ()
-    
+
+htmltest :: IO ()
+htmltest = do
+    checkRoundTripHTML example1 "Simple text"
+    checkRoundTripHTML example2 "Bold text"
+    checkRoundTripHTML example3 "H1 header"
+    checkRoundTripHTML example4 "Complex document"
+    checkRoundTripHTML example5 "Nested bold"
+    checkRoundTripHTML example6 "Ordered list"
+    checkRoundTripHTML example7 "Unordered list with nesting"
+    checkRoundTripHTML example8 "Paragraph with punctuation and numbers"
+    checkRoundTripHTML example9 "Empty document"
+    checkRoundTripHTML example10 "Deeply nested structure"
+
+
+
+
+
+
+
 
 -- TESTS FOR MarkdownDoc
 
@@ -620,10 +731,7 @@ exampleMD6 = MarkdownDoc
         ]
     ]
 
--- Failed
--- 2 results
--- MarkdownDoc [OrderedList [[Paragraph [Str "Outer 1"]],[Paragraph [Str "Outer 2"],UnorderedList [[Paragraph [Str "Inner 1"]],[Paragraph [Str "Inner 2"]]]]]],
--- MarkdownDoc [OrderedList [[Paragraph [Str "Outer 1"]],[Paragraph [Str "Outer 2"]]],UnorderedList [[Paragraph [Str "Inner 1"]],[Paragraph [Str "Inner 2"]]]]
+-- Passed
 exampleMD7 :: MarkdownDoc
 exampleMD7 = MarkdownDoc
     [ OrderedList
@@ -675,31 +783,32 @@ checkRoundTripMD mdDoc name = do
         xs@(_:_:_) -> putStrLn $ "  MD Multiple results: " ++ show xs ++ show (length xs)
         _ -> pure ()
 
-main :: IO ()
-main = do
---    checkRoundTrip example1 "Simple text"
---    checkRoundTrip example2 "Bold text"
---    checkRoundTrip example3 "H1 header"
---    checkRoundTrip example4 "Complex document"
---    checkRoundTrip example5 "Nested bold"
---    checkRoundTrip example6 "Ordered list"
---    checkRoundTrip example7 "Unordered list with nesting"
---    checkRoundTrip example8 "Paragraph with punctuation and numbers"
---    checkRoundTrip example9 "Empty document"
-    checkRoundTrip example10 "Deeply nested structure"
-
 mdtest :: IO ()
 mdtest = do
     checkRoundTripMD exampleMD1 "Simple MarkdownDoc"
-    --checkRoundTripMD exampleMD2 "Paragraph with bold"
-    --checkRoundTripMD exampleMD3 "Header 1"
-    --checkRoundTripMD exampleMD4 "Header 2 and paragraph"
-    --checkRoundTripMD exampleMD5 "Ordered list"
-    --checkRoundTripMD exampleMD6 "Unordered list with bold"
-    --checkRoundTripMD exampleMD7 "Nested lists"
-    --checkRoundTripMD exampleMD8 "Multiple paragraphs"
-    --checkRoundTripMD exampleMD9 "Header, paragraph, and list"
-    --checkRoundTripMD exampleMD10 "Empty document"
+    checkRoundTripMD exampleMD2 "Paragraph with bold"
+    checkRoundTripMD exampleMD3 "Header 1"
+    checkRoundTripMD exampleMD4 "Header 2 and paragraph"
+    checkRoundTripMD exampleMD5 "Ordered list"
+    checkRoundTripMD exampleMD6 "Unordered list with bold"
+    checkRoundTripMD exampleMD7 "Nested lists"
+    checkRoundTripMD exampleMD8 "Multiple paragraphs"
+    checkRoundTripMD exampleMD9 "Header, paragraph, and list"
+    checkRoundTripMD exampleMD10 "Empty document"
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 {-
 We want the following pipeline: 
@@ -717,104 +826,98 @@ markdownDocToDoc :: MarkdownDoc -> Doc
 docToMarkdownDoc :: Doc -> MarkdownDoc
 -}
 
-pipelineTest :: String -> MarkdownDoc -> IO ()
-pipelineTest name mdDoc = do
-    putStrLn $ "=== Pipeline test: " ++ name ++ " ==="
 
-    -- 1. MarkdownDoc -> Markdown text
-    let mdStr = show (prettyMD mdDoc)
 
-    -- 2. Markdown text -> MarkdownDoc
-    let mdParsed = parseMarkdownDoc mdStr
-    let mdDoc' = case mdParsed of
-            [d] -> d
-            _   -> MarkdownDoc []
 
-    -- 3. MarkdownDoc -> Doc
-    let doc = markdownDocToDoc mdDoc
 
-    -- 4. Doc -> HTML text
+
+
+
+
+
+
+
+
+
+-- OLD CODE: 
+
+-- Test round-trip conversion
+checkRoundTrip :: Doc -> String -> IO ()
+checkRoundTrip doc name = do
     let htmlStr = show (prettyHTML doc)
+    let htmlParsed = parseHTML htmlStr
+    let htmlOk = htmlParsed == [doc]
 
-    -- 5. HTML text -> Doc
-    let docParsed = parseHTML htmlStr
-    let doc' = case docParsed of
-            [d] -> d
-            _   -> Element Div []
+    let mdStr = show (prettyMarkdown doc)
+    let mdParsed = parseMarkdown mdStr
+    let mdOk = mdParsed == [doc]
 
-    -- 6. Doc -> Markdown text
-    let mdStrFromDoc = show (prettyMarkdown doc)
+    let htmlStatus = case htmlParsed of
+            [parsed] | parsed == doc -> "OK"
+            [parsed]                 -> "Mismatch"
+            []                       -> "ParseFail"
+            xs                       -> "Multiple"
+        mdStatus = case mdParsed of
+            [parsed] | parsed == doc -> "OK"
+            [parsed]                 -> "Mismatch"
+            []                       -> "ParseFail"
+            xs                       -> "Multiple"
 
-    -- 7. Markdown text -> Doc
-    let docParsedFromMD = parseMarkdown mdStrFromDoc
-    let docFromMD = case docParsedFromMD of
-            [d] -> d
-            _   -> Element Div []
+    let pass = htmlStatus == "OK" && mdStatus == "OK"
+    putStrLn $ name ++ ": " ++ (if pass then "PASS" else "FAIL")
+        ++ " (HTML: " ++ htmlStatus ++ ", MD: " ++ mdStatus ++ ")"
 
-    -- 8. Doc -> MarkdownDoc
-    let mdDocFromDoc = docToMarkdownDoc doc
+    -- Print only the number of results if there are multiple
+    case htmlParsed of
+        xs@(_:_:_) -> putStrLn $ "  HTML Multiple results: " ++ show (length xs)
+        _ -> pure ()
+    case mdParsed of
+        --xs@(_:_:_) -> do
+        --    putStrLn $ "  MD Multiple results: " ++ show (length xs)
+        --    mapM_ (\x -> putStrLn (show x ++ "\n")) xs
+        xs@(_:_:_) -> putStrLn $ "  MD Multiple results: " ++ show (length xs)
+        _ -> pure ()
+    
 
-    -- 9. Doc (from HTML) -> MarkdownDoc
-    let mdDocFromHtml = docToMarkdownDoc doc'
+main :: IO ()
+main = do
+--    checkRoundTrip example1 "Simple text"
+--    checkRoundTrip example2 "Bold text"
+--    checkRoundTrip example3 "H1 header"
+        -- Works for html but not markdown as the parser fails for the Ul Li structure
+        -- FAIL (HTML: OK, MD: Multiple)
+        -- MD Multiple results: 512255
+--    checkRoundTrip example4 "Complex document"
+--    checkRoundTrip example5 "Nested bold"
+--    checkRoundTrip example6 "Ordered list"
+--    checkRoundTrip example7 "Unordered list with nesting"
+--    checkRoundTrip example8 "Paragraph with punctuation and numbers"
+--    checkRoundTrip example9 "Empty document"
+    checkRoundTrip example10 "Deeply nested structure"
 
-    -- Print results
-    putStrLn $ "MD round-trip: " ++ show (mdDoc == mdDoc')
-    putStrLn $ "Doc round-trip (HTML): " ++ show (doc == doc')
-    putStrLn $ "Doc round-trip (MD): " ++ show (doc == docFromMD)
-    putStrLn $ "MD->Doc->MD: " ++ show (mdDoc == mdDocFromDoc)
-    putStrLn $ "MD->Doc->HTML->Doc->MD: " ++ show (mdDoc == mdDocFromHtml)
-    putStrLn ""
 
--- Example pipeline test runner
-pipelineTests :: IO ()
-pipelineTests = do
-    pipelineTest "Simple MarkdownDoc" exampleMD1
-    pipelineTest "Paragraph with bold" exampleMD2
-    pipelineTest "Header 1" exampleMD3
-    pipelineTest "Header 2 and paragraph" exampleMD4
-    pipelineTest "Ordered list" exampleMD5
-    pipelineTest "Unordered list with bold" exampleMD6
-    pipelineTest "Nested lists" exampleMD7
-    pipelineTest "Multiple paragraphs" exampleMD8
-    pipelineTest "Header, paragraph, and list" exampleMD9
-    pipelineTest "Empty document" exampleMD10
 
+
+
+
+
+
+
+-- EXAMPELS OF THINGS THAT WENT WRONG BEFORE: 
+-- 2 results
+-- MarkdownDoc [OrderedList [[Paragraph [Str "Outer 1"]],[Paragraph [Str "Outer 2"],UnorderedList [[Paragraph [Str "Inner 1"]],[Paragraph [Str "Inner 2"]]]]]],
+-- MarkdownDoc [OrderedList [[Paragraph [Str "Outer 1"]],[Paragraph [Str "Outer 2"]]],UnorderedList [[Paragraph [Str "Inner 1"]],[Paragraph [Str "Inner 2"]]]]
 {-
-=== Pipeline test: Simple MarkdownDoc ===
-MD round-trip: True
-Doc round-trip (HTML): OK
-True
-Doc round-trip (MD): False
-MD->Doc->MD: True
-MD->Doc->HTML->Doc->MD: True
-
-=== Pipeline test: Paragraph with bold ===
-MD round-trip: True
-Doc round-trip (HTML): OK
-True
-Doc round-trip (MD): False
-MD->Doc->MD: True
-MD->Doc->HTML->Doc->MD: True
-
-=== Pipeline test: Header 1 ===
-MD round-trip: True
-Doc round-trip (HTML): OK
-True
-Doc round-trip (MD): False
-MD->Doc->MD: True
-MD->Doc->HTML->Doc->MD: True
-
-=== Pipeline test: Header 2 and paragraph ===
-MD round-trip: True
-Doc round-trip (HTML): OK
-True
-Doc round-trip (MD): False
-MD->Doc->MD: True
-MD->Doc->HTML->Doc->MD: True
-
-=== Pipeline test: Ordered list ===
-MD round-trip: True
-Doc round-trip (HTML): OK
-True
-Doc round-trip (MD): *** Exception: stack overflow
+exampleMD7 :: MarkdownDoc
+exampleMD7 = MarkdownDoc
+    [ OrderedList
+        [ [Paragraph [Str "Outer 1"]]
+        , [Paragraph [Str "Outer 2"]
+          , UnorderedList
+                [ [Paragraph [Str "Inner 1"]]
+                , [Paragraph [Str "Inner 2"]]
+                ]
+          ]
+        ]
+    ]
 -}
