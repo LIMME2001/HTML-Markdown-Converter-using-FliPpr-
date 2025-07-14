@@ -956,6 +956,8 @@ inspectConversion md = do
 -- This section contains a full test suite for the dual-way
 -- Markdown and HTML converter.
 
+-- To execute the tests, run runTests.
+
 -- | A data type to hold a single test case, containing both its
 --   Markdown and HTML string representations, and its AST forms.
 data TestCase = TestCase
@@ -1043,27 +1045,30 @@ runSingleTestCase tc = do
     testPipeline "Doc AST -> MD -> Doc AST" (markdownDocToDoc . docToMarkdownDoc) (docAST tc)
 
 -- | A generic test function to compare an actual result with an expected result.
-test :: (Eq a, Show a) => String -> a -> a -> IO ()
+test :: (Eq a, Show a, NFData a) => String -> a -> a -> IO ()
 test testName actual expected = do
-    let pass = actual == expected
-    putStrLn $ "  " ++ testName ++ ": " ++ if pass then "PASS" else "FAIL"
-    unless pass $ do
-        putStrLn $ "    Expected: " ++ show expected
-        putStrLn $ "    Actual:   " ++ show actual
+    -- Wrap the comparison in countTime
+    _ <- countTime testName $ do
+        let pass = actual == expected
+        putStrLn $ "  " ++ testName ++ ": " ++ if pass then "PASS" else "FAIL"
+        unless pass $ do
+            putStrLn $ "    Expected: " ++ show expected
+            putStrLn $ "    Actual:   " ++ show actual
+        return ()
+    return ()
 
 -- | A specialized test function for round-trip conversions.
-testPipeline :: (Eq a, Show a) => String -> (a -> a) -> a -> IO ()
+testPipeline :: (Eq a, Show a, NFData a) => String -> (a -> a) -> a -> IO ()
 testPipeline testName fn initial = do
-    let result = fn initial
-    let pass = result == initial
-    putStrLn $ "  " ++ testName ++ ": " ++ if pass then "PASS" else "FAIL"
-    unless pass $ do
-        putStrLn $ "    Initial: " ++ show initial
-        putStrLn $ "    Result:  " ++ show result
-
--- To run these tests, you can replace the existing `main` function with:
--- main :: IO ()
--- main = runTests
+    _ <- countTime testName $ do
+        let result = fn initial
+        let pass = result == initial
+        putStrLn $ "  " ++ testName ++ ": " ++ if pass then "PASS" else "FAIL"
+        unless pass $ do
+            putStrLn $ "    Initial: " ++ show initial
+            putStrLn $ "    Result:  " ++ show result
+        return ()
+    return ()
 
 
 countTime :: NFData a => String -> IO a -> IO a
@@ -1075,6 +1080,10 @@ countTime label computation = do
     let durationMs = fromIntegral (end - start) / (10 ^ 9)
     putStrLn $ label ++ " - Elapsed: " ++ show durationMs ++ " ms"
     return result
+
+
+
+
 
 benchmarkMarkdownRoundTrip :: MarkdownDoc -> IO ()
 benchmarkMarkdownRoundTrip md = do
