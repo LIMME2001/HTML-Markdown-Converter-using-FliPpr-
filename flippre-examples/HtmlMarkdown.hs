@@ -10,6 +10,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE DeriveGeneric #-}
 
 import Text.FliPpr
 import qualified Text.FliPpr.Automaton as AM
@@ -27,17 +28,20 @@ import qualified Text.FliPpr.Grammar as G (pprAsFlat) -- New import check exactl
 import Control.Applicative (Alternative(..))
 import Data.Word (Word8)
 import Control.Monad (unless)
--- for benchmarking
+
+-- eval
+import GHC.Generics (Generic)
+import Control.DeepSeq (NFData, rnf)
 import System.CPUTime
-import Text.Printf
-import Control.DeepSeq (deepseq)
 
 -- AST DATATYPES FOR MARKDOWN
 
 -- | Abstract syntax tree (AST) for a full Markdown document, as a list of block elements.
 newtype MarkdownDoc = 
     MarkdownDoc [MarkdownBlock]         -- must be separated by empty lines
-    deriving stock (Eq, Show)
+    deriving stock (Eq, Show, Generic)
+
+instance NFData MarkdownDoc
 
 -- | Block-level elements in the Markdown AST.
 data MarkdownBlock
@@ -45,12 +49,16 @@ data MarkdownBlock
     | Header Int [Inline]               -- header with level 1-6 and inline content
     | OrderedList [[MarkdownBlock]]     -- Nested ordered lists (outer and inner lists must be non-empty)
     | UnorderedList [[MarkdownBlock]]   -- Nested unordered lists (outer and inner lists must be non-empty)
-    deriving stock (Eq, Show)
+    deriving stock (Eq, Show, Generic)
+
+instance NFData MarkdownBlock
 
 -- | Inline elements in the Markdown AST.
 data Inline = Str String                -- Plain string
     | Strong [Inline]                   -- Bold/strong text
-    deriving stock (Eq, Show)
+    deriving stock (Eq, Show, Generic)
+
+instance NFData Inline
 
 -- Generate "un" accessor functions for above types (ex. unParagraph, unHeader)
 $(mkUn ''MarkdownDoc)
@@ -63,11 +71,15 @@ $(mkUn ''Inline)
 data Doc
     = Text String
     | Element Tag [Doc]
-    deriving stock (Eq, Show)
+    deriving stock (Eq, Show, Generic)
+
+instance NFData Doc
 
 -- | Tags for HTML-like AST elements.
 data Tag = Bold | H1 | H2 | H3 | H4 | H5 | H6 | P | Div | Li | Ul | Ol
-    deriving stock (Eq, Show)
+    deriving stock (Eq, Show, Generic)
+
+instance NFData Tag
 
 $(mkUn ''Doc)
 $(mkUn ''Tag)
@@ -965,7 +977,7 @@ testCases =
       (Element P [Text "Just a simple paragraph."])
   , TestCase
       "Header Level 1"
-      "# Title"
+      "Title\n===================="
       "<h1>Title</h1>"
       (MarkdownDoc [Header 1 [Str "Title"]])
       (Element H1 [Text "Title"])
@@ -983,19 +995,19 @@ testCases =
       (Element Ul [Element Li [Element P [Text "Item 1"]], Element Li [Element P [Text "Item 2"]]])
   , TestCase
       "Ordered List"
-      "1. First\n2. Second"
+      "#. First\n#. Second"
       "<ol><li><p>First</p></li><li><p>Second</p></li></ol>"
       (MarkdownDoc [OrderedList [[Paragraph [Str "First"]], [Paragraph [Str "Second"]]]])
       (Element Ol [Element Li [Element P [Text "First"]], Element Li [Element P [Text "Second"]]])
   , TestCase
       "Complex Document"
-      "# A Title\n\nSome text here.\n\n- A list item\n- Another one"
+      "A Title\n====================\nSome text here.\n- A list item\n- Another one"
       "<div><h1>A Title</h1><p>Some text here.</p><ul><li><p>A list item</p></li><li><p>Another one</p></li></ul></div>"
       (MarkdownDoc [Header 1 [Str "A Title"], Paragraph [Str "Some text here."], UnorderedList [[Paragraph [Str "A list item"]], [Paragraph [Str "Another one"]]]])
       (Element Div [Element H1 [Text "A Title"], Element P [Text "Some text here."], Element Ul [Element Li [Element P [Text "A list item"]], Element Li [Element P [Text "Another one"]]]])
   , TestCase
       "Nested Lists"
-      "- Outer 1\n  1. Inner A\n  2. Inner B\n- Outer 2"
+      "- Outer 1\n#. Inner A\n#. Inner B\n- Outer 2"
       "<ul><li><div><p>Outer 1</p><ol><li><p>Inner A</p></li><li><p>Inner B</p></li></ol></div></li><li><p>Outer 2</p></li></ul>"
       (MarkdownDoc [UnorderedList [[Paragraph [Str "Outer 1"], OrderedList [[Paragraph [Str "Inner A"]], [Paragraph [Str "Inner B"]]]], [Paragraph [Str "Outer 2"]]]])
       (Element Ul [Element Li [Element Div [Element P [Text "Outer 1"], Element Ol [Element Li [Element P [Text "Inner A"]], Element Li [Element P [Text "Inner B"]]]]], Element Li [Element P [Text "Outer 2"]]])
@@ -1054,3 +1066,35 @@ testPipeline testName fn initial = do
 -- main = runTests
 
 
+countTime :: NFData a => String -> IO a -> IO a
+countTime label computation = do
+    start <- getCPUTime
+    result <- computation
+    rnf result `seq` return ()
+    end <- getCPUTime
+    let durationMs = fromIntegral (end - start) / (10 ^ 9)
+    putStrLn $ label ++ " - Elapsed: " ++ show durationMs ++ " ms"
+    return result
+
+benchmarkMarkdownRoundTrip :: MarkdownDoc -> IO ()
+benchmarkMarkdownRoundTrip md = do
+  _ <- countTime "Markdown <-> HTML <-> Markdown" $
+    return $ docToMarkdownDoc (markdownDocToDoc md)
+  return ()
+
+benchmarkHtmlRoundTrip :: Doc -> IO ()
+benchmarkHtmlRoundTrip html = do
+  _ <- countTime "HTML <-> Markdown <-> HTML" $
+    return $ markdownDocToDoc (docToMarkdownDoc html)
+  return ()
+
+runBenchmarks :: IO ()
+runBenchmarks = do
+  putStrLn $ replicate 40 '='
+  putStrLn "Running Round-Trip Performance Benchmarks"
+  putStrLn $ replicate 40 '='
+
+  benchmarkMarkdownRoundTrip conversionTestMD1
+  benchmarkMarkdownRoundTrip conversionTestMD7
+  benchmarkHtmlRoundTrip conversionTestDoc1
+  benchmarkHtmlRoundTrip conversionTestDoc5
