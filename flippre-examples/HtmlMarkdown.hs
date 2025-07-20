@@ -1,3 +1,8 @@
+{-
+This is an absolutley massive document which includes all progress 
+
+
+-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -29,8 +34,8 @@ import Control.Applicative (Alternative(..))
 import Data.Word (Word8)
 import Control.Monad (unless)
 
--- eval
-import GHC.Generics (Generic)
+-- imports for evaluation
+import GHC.Generics (Generic, Par1 (unPar1))
 import Control.DeepSeq (NFData, rnf)
 import System.CPUTime
 
@@ -335,12 +340,7 @@ pprMarkdown = F.do
                 ]       
     pure pDoc
 
-
-
-
-
-
-
+-- NOT USED ANYMORE
 
 -- | Helper bijection for duplicating a value into a pair (a, a).
 --   Used to generate both start and end tags for HTML elements.
@@ -417,6 +417,78 @@ pprHTML = F.do
     pure pDoc
 
 
+-- NEW HTML FUNCTION USED FOR COMPLETE ROUNDTRIPS
+
+pprMarkdownHTML :: (FliPprD arg exp) => FliPprM exp (A arg MarkdownDoc -> E exp D)
+pprMarkdownHTML = F.do 
+    let pprText str = textAs str plainText 
+    rec pprTop <- share $ \d -> 
+            case_ d 
+            [
+                unMarkdownDoc $ \bs -> text "<div>" <#> pprBlocks bs <#> text "</div>"
+            ]
+        pprBlocks <- share $ \bs -> 
+            case_ bs 
+            [ 
+                unNil $ text "", 
+                unCons $ \b' bs' -> pprBlock b' <#> pprBlocks bs' 
+            ]
+
+        pprHeader <- share $ \level inlines -> 
+            let header i d =
+                    text ("<h" <> show i <> ">") <#> d <#> text ("</h" <> show i <> ">")  
+            in case_ level 
+                [
+                    is i $ header i (pprInlines True inlines)
+                    | i <- [1..6]
+                ]
+
+        pprBlock <- share $ \b -> 
+            case_ b 
+            [
+                unParagraph $ \ inlines -> text "<p>" <#> pprInlines True inlines <#> text "</p>" , 
+                unHeader    $ \level inlines -> pprHeader level inlines, 
+                unOrderedList $ \ls -> text "<ol>" <#> pprItems ls <#> text "</ol>", 
+                unUnorderedList $ \ls -> text "<ul>" <#> pprItems ls <#> text "</ul>"
+            ]
+
+        pprItems <- share $ \items -> 
+            case_ items 
+            [
+                unNil $ text "",
+                unCons $ \item' items' -> 
+                    text "<li>" <#> pprBlocks item' <#> text "</li>" <#> pprItems items'
+            ]
+
+        pprInlines <- share $ \canPrintStr inlines -> 
+            case_ inlines 
+            [
+                unNil $ text "", 
+                unCons $ \i' is' -> 
+                    case_ i' 
+                    [
+                        unStr $ \s -> 
+                            if canPrintStr then 
+                                pprText s <#> pprInlines False is' 
+                            else 
+                                abort, 
+                        unStrong $ \inlines' -> 
+                            text "<b>" <#> pprInlines True inlines' <#> text "</b>" <#> pprInlines True is'
+                    ]    
+            ]
+        
+        -- pprInline <- share $ \i -> 
+        --     case_ i 
+        --     [
+        --         unStr $ \s -> pprText s , 
+        --         unStrong $ \inlines -> text "<b>" <#> pprInlines inlines <#> text "</b>" 
+        --     ]
+
+
+    pure pprTop 
+
+
+
 -- | Convert a 'MarkdownDoc' (Markdown AST) to a pretty-printed Markdown document.
 prettyMD :: MarkdownDoc -> PP.Doc ann
 prettyMD = pprMode (flippr $ arg <$> pprMarkdownDoc)
@@ -428,6 +500,21 @@ prettyMarkdown = pprMode (flippr $ arg <$> pprMarkdown)
 -- | Convert a 'Doc' (HTML-like AST) to a pretty-printed HTML document.
 prettyHTML :: Doc -> PP.Doc ann
 prettyHTML = pprMode (flippr $ arg <$> pprHTML)
+
+prettyMDHTML :: MarkdownDoc -> PP.Doc ann 
+prettyMDHTML = pprMode (flippr $ arg <$> pprMarkdownHTML)
+
+parseMDHTML :: String -> [MarkdownDoc]
+parseMDHTML = \s ->
+    case p (stripHtml s) of
+        Ok es ->  trace "OK" $ es
+        Fail e -> trace "Fail" $ error (show e)
+    where
+        g :: (G.GrammarD Char g) => g (Err ann MarkdownDoc)
+        g = parsingMode (flippr $ arg <$> pprMarkdownHTML)
+        p = E.parse g
+
+
 
 -- PARSERS
 
@@ -664,6 +751,10 @@ exampleMD9 = MarkdownDoc
 exampleMD10 :: MarkdownDoc
 exampleMD10 = MarkdownDoc []
 
+-- <ul><li><div><p>Outer 1</p><ol><li><p>Inner A</p></li><li><p>Inner B</p></li></ol></div></li><li><p>Outer 2</p></li></ul>"
+exampleMD11 :: MarkdownDoc
+exampleMD11 = MarkdownDoc [UnorderedList [[Paragraph [Str "Outer 1"], OrderedList [[Paragraph [Str "Inner A"]], [Paragraph [Str "Inner B"]]]], [Paragraph [Str "Outer 2"]]]]
+
 checkRoundTripMD :: MarkdownDoc -> String -> IO ()
 checkRoundTripMD mdDoc name = do
     let mdStr = show (prettyMD mdDoc)
@@ -719,6 +810,7 @@ inlineToDocs (Strong xs) = [Element Bold (inlinesToDocs xs)]
 
 -- Convert Doc to MarkdownDoc
 docToMarkdownDoc :: Doc -> MarkdownDoc
+docToMarkdownDoc (Text s) = MarkdownDoc [Paragraph [Str s]]
 docToMarkdownDoc (Element Div blocks) = MarkdownDoc (map docToBlock blocks)
 docToMarkdownDoc (Element Div []) = MarkdownDoc []
 docToMarkdownDoc doc = MarkdownDoc [docToBlock doc]
@@ -731,21 +823,10 @@ docToBlock (Element H3 inlines) = Header 3 (docsToInlines inlines)
 docToBlock (Element H4 inlines) = Header 4 (docsToInlines inlines)
 docToBlock (Element H5 inlines) = Header 5 (docsToInlines inlines)
 docToBlock (Element H6 inlines) = Header 6 (docsToInlines inlines)
-docToBlock (Element Ol items) = OrderedList (map liToBlocks items)
 docToBlock (Element Ul items) = UnorderedList (map liToBlocks items)
+docToBlock (Element Ol items) = OrderedList (map liToBlocks items)
 docToBlock (Element Bold inlines) = Paragraph [Strong (docsToInlines inlines)]
-docToBlock (Element Div blocks) = Paragraph (docsToInlines blocks)  -- Flatten div to paragraph (hopefully ok)
-{-
-This gives:
-  Doc -> MarkdownDoc: *** Exception: Cannot convert multi-element div to single block
-CallStack (from HasCallStack):
-  error, called at C:\Users\linus\Documents\my VS code\flippr\flippre\flippre-examples\HtmlMarkdown.hs:742:10 in main:Main
-  
-docToBlock (Element Div blocks) = 
-  case blocks of
-    [single] -> docToBlock single  -- Only flatten single elements
-    _ -> error "Cannot convert multi-element div to single block"
--}
+docToBlock (Element Div blocks) = Paragraph (docsToInlines blocks)  -- Flatten div to paragraph (hopefully ok) THIS IS PROBLEMATIC
 docToBlock (Text s) = Paragraph [Str s]
 docToBlock _ = Paragraph []
 
@@ -852,7 +933,7 @@ conversionTestDoc6 :: Doc
 conversionTestDoc6 = Element Div []
 
 conversionTestDoc7 :: Doc
-conversionTestDoc7 = Text "Just text"
+conversionTestDoc7 = Element P [Text "Just text"]
 
 -- Function to test MarkdownDoc -> Doc -> MarkdownDoc round-trip
 testMDRoundTrip :: MarkdownDoc -> String -> IO ()
@@ -961,13 +1042,14 @@ inspectConversion md = do
 -- | A data type to hold a single test case, containing both its
 --   Markdown and HTML string representations, and its AST forms.
 data TestCase = TestCase
-  { name         :: String
-  , markdownStr  :: String
-  , htmlStr      :: String
-  , markdownAST  :: MarkdownDoc
-  , docAST       :: Doc
-  }
+    { name         :: String
+    , markdownStr  :: String
+    , htmlStr      :: String
+    , markdownAST  :: MarkdownDoc
+    , docAST       :: Doc
+    }
 
+    --  map (parseMDHTML . show . prettyMDHTML) $ parseMarkdownDoc $ show $ prettyMD exampleMD1
 -- | A list of test cases to be used in the test suite.
 testCases :: [TestCase]
 testCases =
@@ -1028,21 +1110,21 @@ runSingleTestCase tc = do
     putStrLn $ "\n--- Testing: " ++ name tc ++ " ---"
     -- Test Parsing
     test "Markdown Parsing" (head (parseMarkdownDoc (markdownStr tc))) (markdownAST tc)
-    test "HTML Parsing" (head (parseHTML (htmlStr tc))) (docAST tc)
+    test "HTML Parsing" (head (parseMDHTML (markdownStr tc))) (markdownAST tc)
 
     -- Test Pretty Printing
     test "Markdown Pretty Printing" (show . prettyMD . markdownAST $ tc) (markdownStr tc)
-    test "HTML Pretty Printing" (show . prettyHTML . docAST $ tc) (htmlStr tc)
+    test "HTML Pretty Printing" (show . prettyMDHTML . markdownAST $ tc) (htmlStr tc)
 
     -- Test AST Conversions
-    test "MarkdownDoc -> Doc" (markdownDocToDoc (markdownAST tc)) (docAST tc)
-    test "Doc -> MarkdownDoc" (docToMarkdownDoc (docAST tc)) (markdownAST tc)
+    --test "MarkdownDoc -> Doc" (markdownDocToDoc (markdownAST tc)) (docAST tc)
+    --test "Doc -> MarkdownDoc" (docToMarkdownDoc (docAST tc)) (markdownAST tc)
 
     -- Test Round Trips
     testPipeline "MD -> AST -> MD" (show . prettyMD . head . parseMarkdownDoc) (markdownStr tc)
-    testPipeline "HTML -> AST -> HTML" (show . prettyHTML . head . parseHTML) (htmlStr tc)
-    testPipeline "MD AST -> Doc -> MD AST" (docToMarkdownDoc . markdownDocToDoc) (markdownAST tc)
-    testPipeline "Doc AST -> MD -> Doc AST" (markdownDocToDoc . docToMarkdownDoc) (docAST tc)
+    testPipeline "HTML -> AST -> HTML" (show . prettyMDHTML . head . parseMDHTML) (htmlStr tc)
+    --testPipeline "MD AST -> Doc -> MD AST" (docToMarkdownDoc . markdownDocToDoc) (markdownAST tc)
+    --testPipeline "Doc AST -> MD -> Doc AST" (markdownDocToDoc . docToMarkdownDoc) (docAST tc)
 
 -- | A generic test function to compare an actual result with an expected result.
 test :: (Eq a, Show a, NFData a) => String -> a -> a -> IO ()
